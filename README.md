@@ -174,6 +174,8 @@ http://localhost:5173
 <img width="1366" height="573" alt="image" src="https://github.com/user-attachments/assets/0072ea80-76be-4c19-be85-2564ed7b9c4e" />
 <img width="1366" height="644" alt="image" src="https://github.com/user-attachments/assets/2834935b-24df-4a25-a013-a7499c0c3cd8" />
 
+📌 Author
+Prerna Ranjan IT Undergraduate | Full-Stack Developer
 
 
 
