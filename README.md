@@ -160,3 +160,28 @@ npm run dev
 
 Open:
 http://localhost:5173
+
+<img width="777" height="617" alt="image" src="https://github.com/user-attachments/assets/0957def9-a569-4252-a8a7-c7b4ba9e8c66" />
+<img width="728" height="552" alt="image" src="https://github.com/user-attachments/assets/bcfd0cbc-a98f-40db-9b4c-89c1424d6e26" />
+<img width="740" height="549" alt="image" src="https://github.com/user-attachments/assets/e52fbf39-9ce4-42d2-ab00-257a35ccb412" />
+<img width="547" height="538" alt="image" src="https://github.com/user-attachments/assets/e38a1673-3a84-4d64-8daf-9f1f8b62f18b" />
+<img width="561" height="651" alt="image" src="https://github.com/user-attachments/assets/79beccb9-af5a-4eb4-b175-64cb118f7567" />
+<img width="599" height="610" alt="image" src="https://github.com/user-attachments/assets/99871507-6827-4df7-a49f-7dfcf6a6a39f" />
+<img width="1311" height="673" alt="image" src="https://github.com/user-attachments/assets/edb42227-6b09-405b-bb31-73cc7872fde4" />
+<img width="705" height="684" alt="image" src="https://github.com/user-attachments/assets/4a7661c4-3f77-42da-8a78-255565040419" />
+<img width="1363" height="609" alt="image" src="https://github.com/user-attachments/assets/4bcaa605-dbf9-471c-9ec4-c2a20d44f24e" />
+<img width="1359" height="552" alt="image" src="https://github.com/user-attachments/assets/db356e42-baea-40f9-a60d-e4627f0b1d5b" />
+<img width="1366" height="573" alt="image" src="https://github.com/user-attachments/assets/0072ea80-76be-4c19-be85-2564ed7b9c4e" />
+<img width="1366" height="644" alt="image" src="https://github.com/user-attachments/assets/2834935b-24df-4a25-a013-a7499c0c3cd8" />
+
+
+
+
+
+
+
+
+
+
+
+
