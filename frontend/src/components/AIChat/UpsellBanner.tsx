@@ -17,6 +17,10 @@ interface UpsellBannerProps {
     discount: number
   ) => void;
   selectedUpsellIds: string[];
+  // Per-unit bundle saving the server will apply, keyed by product id.
+  savings?: Record<string, number>;
+  // Name of the product the savings depend on.
+  anchorName?: string;
 }
 
 export const UpsellBanner: React.FC<
@@ -25,6 +29,8 @@ export const UpsellBanner: React.FC<
   upsellProducts,
   onAddUpsell,
   selectedUpsellIds,
+  savings = {},
+  anchorName,
 }) => {
   // Don't render anything when there are no
   // recommended cross-sell products.
@@ -35,7 +41,12 @@ export const UpsellBanner: React.FC<
     return null;
   }
 
-  const bundleDiscount = 150;
+  const savingFor = (id: string) => savings[id] ?? 0;
+
+  const bestSaving = Math.max(
+    0,
+    ...upsellProducts.map((item) => savingFor(item.id))
+  );
 
   return (
     <div
@@ -62,17 +73,18 @@ export const UpsellBanner: React.FC<
                 Smart AI Bundle & Cross-Sell
               </span>
 
-              <span className="flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/20 px-2 py-0.5 font-mono text-[10px] font-bold text-amber-300">
-                <Tag className="h-3 w-3" />
-
-                SAVE ₹150 INSTANTLY
-              </span>
+              {bestSaving > 0 && (
+                <span className="flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/20 px-2 py-0.5 font-mono text-[10px] font-bold text-amber-300">
+                  <Tag className="h-3 w-3" />
+                  SAVE UP TO ₹{bestSaving.toLocaleString("en-IN")}
+                </span>
+              )}
             </h4>
 
             <p className="mt-1 text-xs leading-relaxed text-zinc-400">
-              Customers who bought these products
-              frequently pair them with these
-              essentials.
+              {anchorName
+                ? `Picked to go with ${anchorName}. Bundle savings apply when you buy it together with ${anchorName}.`
+                : "Accessories that go with this recommendation."}
             </p>
           </div>
         </div>
@@ -166,13 +178,15 @@ export const UpsellBanner: React.FC<
 
                 {/* Bundle saving */}
 
-                <div className="mt-0.5 text-[10px] text-zinc-500">
-                  Extra ₹
-                  {bundleDiscount.toLocaleString(
-                    "en-IN"
-                  )}{" "}
-                  bundle discount
-                </div>
+                {savingFor(item.id) > 0 && (
+                  <div className="mt-0.5 text-[10px] text-zinc-500">
+                    Extra ₹
+                    {savingFor(item.id).toLocaleString(
+                      "en-IN"
+                    )}{" "}
+                    off with the bundle
+                  </div>
+                )}
               </div>
 
               {/* ================================= */}
@@ -185,7 +199,7 @@ export const UpsellBanner: React.FC<
                 onClick={() =>
                   onAddUpsell(
                     item,
-                    bundleDiscount
+                    savingFor(item.id)
                   )
                 }
                 className={`flex h-9 shrink-0 items-center gap-1.5 rounded-lg px-3 text-xs font-bold transition-all ${

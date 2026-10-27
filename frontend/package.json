@@ -1,11 +1,12 @@
 {
-  "name": "fronted",
+  "name": "nexus-ai-commerce-frontend",
   "private": true,
   "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "typecheck": "tsc --noEmit -p .",
+    "build": "tsc --noEmit -p . && vite build",
     "preview": "vite preview"
   },
   "dependencies": {

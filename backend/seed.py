@@ -23,7 +23,7 @@ def _now():
 # ============================================================
 
 async def seed_data():
-    print("🚀 Starting seed script for Nexus AI Commerce...")
+    print("Seeding Nexus AI Commerce sample data (all brands, people and orders are fictional)...")
 
     await ensure_indexes()
 
@@ -59,7 +59,7 @@ async def seed_data():
     accessories = [
         Product(
             id=socks_id,
-            name="Pro Dri-Fit Anti-Blister Running Socks (3-Pack)",
+            name="Pro DryWeave Anti-Blister Running Socks (3-Pack)",
             brand="AeroFit",
             category="accessories",
             price=499.0,
@@ -85,7 +85,7 @@ async def seed_data():
         Product(
             id=bottle_id,
             name="HydroSteel 750ml Insulated Sports Gym Flask",
-            brand="ThermoPro",
+            brand="Kooltrek",
             category="accessories",
             price=599.0,
             original_price=999.0,
@@ -138,7 +138,7 @@ async def seed_data():
         Product(
             id="prod-shoe-velocity-01",
             name="Velocity Nitro Runner X",
-            brand="Puma Pro",
+            brand="Stridex",
             category="footwear",
             price=2499.0,
             original_price=3999.0,
@@ -152,9 +152,9 @@ async def seed_data():
             image_url=IMG_SHOE_1,
             description="Engineered for high energy return and daily road running. Nitrogen-infused foam midsole delivers plush shock absorption under ₹3k.",
             features=[
-                "Nitro-Infused Responsive Cushion",
+                "Nitrogen-Infused Responsive Cushion",
                 "Ultra-Lightweight Engineered Mesh (225g)",
-                "PUMAGRIP High Traction Outsole",
+                "GripMax High Traction Outsole",
                 "Anatomical Heel Flare",
             ],
             upsell_product_ids=[socks_id, spray_id, bottle_id],
@@ -163,8 +163,8 @@ async def seed_data():
         ),
         Product(
             id="prod-shoe-airglide-02",
-            name="AirGlide HyperStride 2.0",
-            brand="Nike Athletics",
+            name="GlideLite HyperStride 2.0",
+            brand="Aerolite",
             category="footwear",
             price=2899.0,
             original_price=4499.0,
@@ -178,7 +178,7 @@ async def seed_data():
             image_url=IMG_SHOE_2,
             description="Max-cushion road running shoe designed for long marathon training. Dual-density foam absorbs heel strikes with seamless comfort.",
             features=[
-                "Dual Density Cloudfoam",
+                "Dual Density Foam",
                 "Wider Toe Box for Natural Splay",
                 "Abrasion-Resistant Bumper",
                 "Padded Heel Collar",
@@ -190,7 +190,7 @@ async def seed_data():
         Product(
             id="prod-shoe-aeropace-03",
             name="AeroPace Featherweight 5K",
-            brand="Campus Active",
+            brand="Padma Active",
             category="footwear",
             price=1899.0,
             original_price=2999.0,
@@ -204,7 +204,7 @@ async def seed_data():
             image_url=IMG_SHOE_3,
             description="Ultra-budget performance shoe with high flex grooves. Ideal for beginner joggers, gym workouts, and daily 5,000 step routines.",
             features=[
-                "Phylon Shock-Absorbing Base",
+                "EVA Shock-Absorbing Base",
                 "Breathable Knitted Upper",
                 "Memory Tech Insole",
                 "Featherlight 190g Weight",
@@ -216,7 +216,7 @@ async def seed_data():
         Product(
             id="prod-shoe-trailblaze-04",
             name="TrailBlaze All-Terrain Gripper",
-            brand="Sparx Performance",
+            brand="Terrafoot",
             category="footwear",
             price=2299.0,
             original_price=3499.0,
@@ -242,7 +242,7 @@ async def seed_data():
         Product(
             id="prod-shoe-carbon-05",
             name="Apex CarbonFly Elite Marathoner",
-            brand="ProStrike",
+            brand="Velox",
             category="footwear",
             price=4299.0,
             original_price=6999.0,
@@ -271,7 +271,7 @@ async def seed_data():
         Product(
             id="prod-watch-pulse-01",
             name="PulseFit Pro AMOLED Smartwatch",
-            brand="Noise Tech",
+            brand="PulseWear",
             category="smartwatch",
             price=2999.0,
             original_price=5999.0,
@@ -297,7 +297,7 @@ async def seed_data():
         Product(
             id="prod-watch-aerosync-02",
             name="AeroSync Active GPS Sport Tracker",
-            brand="Fastrack Pulse",
+            brand="Trekline",
             category="smartwatch",
             price=3799.0,
             original_price=6499.0,
@@ -323,7 +323,7 @@ async def seed_data():
         Product(
             id="prod-audio-soundwave-01",
             name="SoundWave Active ANC Wireless Headphones",
-            brand="boAt Nirvana",
+            brand="Sonique",
             category="electronics",
             price=2899.0,
             original_price=4999.0,
@@ -339,7 +339,7 @@ async def seed_data():
             features=[
                 "Hybrid ANC (-32dB)",
                 "50-Hour Playtime with Fast Charge",
-                "Low-Latency Beast Mode",
+                "Low-Latency Game Mode",
                 "Memory Foam Plush Ear Cushions",
             ],
             upsell_product_ids=[bottle_id],
@@ -379,7 +379,7 @@ async def seed_data():
     for product in all_products:
         await db.products.insert_one(product.model_dump())
 
-    print(f"✅ Seeded {len(all_products)} catalog products.")
+    print(f"Seeded {len(all_products)} catalog products.")
 
     # ========================================================
     # 3. SAMPLE COMPLETED ORDERS
@@ -405,7 +405,7 @@ async def seed_data():
                 OrderItem(
                     product_id="prod-shoe-velocity-01",
                     name="Velocity Nitro Runner X",
-                    brand="Puma Pro",
+                    brand="Stridex",
                     price=2499.0,
                     original_price=3999.0,
                     quantity=1,
@@ -416,7 +416,7 @@ async def seed_data():
                 ),
                 OrderItem(
                     product_id=socks_id,
-                    name="Pro Dri-Fit Anti-Blister Running Socks (3-Pack)",
+                    name="Pro DryWeave Anti-Blister Running Socks (3-Pack)",
                     brand="AeroFit",
                     price=499.0,
                     original_price=799.0,
@@ -428,9 +428,9 @@ async def seed_data():
                 ),
             ],
             subtotal=2998.0,
-            bundle_discount=200.0,
+            bundle_discount=150.0,
             tax=0.0,
-            total_amount=2798.0,
+            total_amount=2848.0,
             currency="INR",
             status="paid",
             payment_method="upi",
@@ -446,9 +446,9 @@ async def seed_data():
                 catalog_matches_found=4,
                 inventory_status="42 units in stock at South Hub Warehouse",
                 recommendation_rationale="Recommended Velocity Nitro Runner X at ₹2,499 - high responsive cushioning for 5k/10k road training",
-                upsell_strategy="Cross-sold Pro Dri-Fit 3-Pack socks with ₹200 bundle savings",
+                upsell_strategy="Cross-sold Pro DryWeave 3-Pack socks with ₹150 bundle savings",
                 execution_time_ms=132,
-                confidence_score=0.98,
+                confidence_score=1.0,
             ),
             created_at=_now() - timedelta(hours=3),
             paid_at=_now() - timedelta(hours=3, minutes=1),
@@ -471,8 +471,8 @@ async def seed_data():
             items=[
                 OrderItem(
                     product_id="prod-shoe-airglide-02",
-                    name="AirGlide HyperStride 2.0",
-                    brand="Nike Athletics",
+                    name="GlideLite HyperStride 2.0",
+                    brand="Aerolite",
                     price=2899.0,
                     original_price=4499.0,
                     quantity=1,
@@ -499,10 +499,10 @@ async def seed_data():
                 category_extracted="footwear",
                 catalog_matches_found=3,
                 inventory_status="28 units available in stock",
-                recommendation_rationale="Matched AirGlide HyperStride 2.0 at ₹2,899 for superior joint shock absorption",
+                recommendation_rationale="Matched GlideLite HyperStride 2.0 at ₹2,899 for superior joint shock absorption",
                 upsell_strategy="User declined accessories bundle",
                 execution_time_ms=118,
-                confidence_score=0.96,
+                confidence_score=1.0,
             ),
             created_at=_now() - timedelta(hours=8),
             paid_at=_now() - timedelta(hours=8, minutes=2),
@@ -512,7 +512,7 @@ async def seed_data():
     for order in sample_orders:
         await db.orders.insert_one(order.model_dump())
 
-    print(f"✅ Seeded {len(sample_orders)} sample paid orders.")
+    print(f"Seeded {len(sample_orders)} sample paid orders.")
 
     # ========================================================
     # 4. MARKETING CAMPAIGNS
@@ -528,15 +528,14 @@ async def seed_data():
             channels=["whatsapp", "sms", "email"],
             whatsapp_copy=(
                 "⚡ *Level Up Your Stride with Top Running Shoes Under ₹3,000!* 👟\n\n"
-                "Get an extra 15% OFF on Velocity Nitro & AirGlide Pro with free running socks.\n\n"
+                "Get an extra 15% OFF on Velocity Nitro Runner X & GlideLite HyperStride.\n\n"
                 "🎟️ Code: *RUNFAST15*\n"
-                "👉 Shop Now: https://nexus-shop.in/c/runfast15"
+                "👉 Shop Now: https://example.com/c/runfast15"
             ),
             sms_copy="Nexus AI Alert: Get top-rated running shoes under ₹3,000 + Extra 15% OFF with code RUNFAST15.",
             discount_code="RUNFAST15",
             discount_percent=15,
-            forecasted_roi="4.8x ROAS | Est. 210 Orders | ₹5.2L Projected GMV",
-            target_category="footwear",
+                        target_category="footwear",
             created_by_agent=True,
             metrics=CampaignMetrics(
                 sent_count=2450,
@@ -556,15 +555,14 @@ async def seed_data():
             channels=["whatsapp", "sms"],
             whatsapp_copy=(
                 "🔥 *Tech Upgrade for Your Workouts!* 🎧\n\n"
-                "Track your pulse & smash your goals with Noise AMOLED Smartwatches & ANC Headphones starting at ₹2,899.\n\n"
+                "Track your pulse & smash your goals with PulseWear AMOLED Smartwatches & ANC Headphones starting at ₹2,899.\n\n"
                 "🎟️ Code: *FITTECH20*\n"
-                "👉 Link: https://nexus-shop.in/c/fittech20"
+                "👉 Link: https://example.com/c/fittech20"
             ),
-            sms_copy="Nexus Deal: Noise AMOLED Smartwatches & ANC Audio starting at ₹2,899. Use code FITTECH20.",
+            sms_copy="Nexus Deal: PulseWear AMOLED Smartwatches & ANC Audio starting at ₹2,899. Use code FITTECH20.",
             discount_code="FITTECH20",
             discount_percent=20,
-            forecasted_roi="3.9x ROAS | Est. 140 Orders | ₹3.6L Projected GMV",
-            target_category="smartwatch",
+                        target_category="smartwatch",
             created_by_agent=True,
             metrics=CampaignMetrics(
                 sent_count=1800,
@@ -580,7 +578,7 @@ async def seed_data():
     for campaign in sample_campaigns:
         await db.campaigns.insert_one(campaign.model_dump())
 
-    print(f"✅ Seeded {len(sample_campaigns)} marketing campaigns.")
+    print(f"Seeded {len(sample_campaigns)} marketing campaigns.")
 
     # ========================================================
     # 5. AUDIT TRAIL
@@ -619,7 +617,7 @@ async def seed_data():
             id="AUD-REC-9904",
             event_type="PRODUCT_RECOMMENDED",
             title="AI Recommendation Card Dispatched",
-            description="Delivered Velocity Nitro Runner X with comparative analysis vs AirGlide HyperStride",
+            description="Delivered Velocity Nitro Runner X with comparative analysis vs GlideLite HyperStride",
             details={
                 "primary_id": "prod-shoe-velocity-01",
                 "confidence": 0.98,
@@ -632,10 +630,10 @@ async def seed_data():
             id="AUD-UPS-9905",
             event_type="UPSELL_SUGGESTED",
             title="Smart Upsell Engine Triggered",
-            description="Cross-sold Pro Dri-Fit 3-Pack socks with ₹200 bundle discount",
+            description="Cross-sold Pro DryWeave 3-Pack socks with ₹150 bundle discount",
             details={
                 "upsell_id": socks_id,
-                "bundle_discount": 200.0,
+                "bundle_discount": 150.0,
             },
             status="success",
             latency_ms=62,
@@ -646,10 +644,10 @@ async def seed_data():
             event_type="ORDER_CREATED",
             order_id="ORD-20260315-A8F291",
             title="Customer Order Initialized",
-            description="Order ORD-20260315-A8F291 created for Aarav Sharma - Total: ₹2,798",
+            description="Order ORD-20260315-A8F291 created for Aarav Sharma - Total: ₹2,848",
             details={
                 "razorpay_order_id": "order_rp_8192a091bf2841",
-                "amount": 2798.0,
+                "amount": 2848.0,
             },
             status="info",
             latency_ms=90,
@@ -660,11 +658,11 @@ async def seed_data():
             event_type="PAYMENT_VERIFIED",
             order_id="ORD-20260315-A8F291",
             title="Razorpay Payment Verified & Captured",
-            description="Payment pay_91fa8201bc8271 verified via UPI - ₹2,798",
+            description="Payment pay_91fa8201bc8271 verified via UPI - ₹2,848",
             details={
                 "payment_id": "pay_91fa8201bc8271",
                 "method": "upi",
-                "amount": 2798.0,
+                "amount": 2848.0,
             },
             status="success",
             latency_ms=115,
@@ -675,8 +673,8 @@ async def seed_data():
     for audit_event in sample_audit:
         await db.audit_events.insert_one(audit_event.model_dump())
 
-    print(f"✅ Seeded {len(sample_audit)} audit events.")
-    print("✨ Database seed completed successfully!")
+    print(f"Seeded {len(sample_audit)} audit events.")
+    print("Database seed completed.")
 
 
 if __name__ == "__main__":

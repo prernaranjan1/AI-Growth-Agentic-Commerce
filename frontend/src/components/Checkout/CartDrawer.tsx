@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   X,
   Trash2,
@@ -7,10 +7,11 @@ import {
   Zap,
   Plus,
   Minus,
+  Tag,
 } from "lucide-react";
 
 import type {
-  OrderItem,
+  CartLine,
   Address,
   OrderCreate,
   Order,
@@ -22,10 +23,11 @@ import { toast } from "sonner";
 interface CartDrawerProps {
   isOpen: boolean;
   onClose: () => void;
-  items: OrderItem[];
-  bundleDiscount: number;
-  onUpdateQuantity: (productId: string, delta: number) => void;
-  onRemoveItem: (productId: string) => void;
+  items: CartLine[];
+  // Chat session that produced this cart, if any.
+  sessionId?: string;
+  onUpdateQuantity: (lineId: string, delta: number) => void;
+  onRemoveItem: (lineId: string) => void;
   onProceedToRazorpay: (order: Order) => void;
 }
 
@@ -33,43 +35,47 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   isOpen,
   onClose,
   items,
-  bundleDiscount,
+  sessionId,
   onUpdateQuantity,
   onRemoveItem,
   onProceedToRazorpay,
 }) => {
-  const [customerName, setCustomerName] = useState("Aarav Sharma");
-  const [customerEmail, setCustomerEmail] = useState(
-    "aarav.sharma@example.com"
-  );
-  const [customerPhone, setCustomerPhone] = useState(
-    "+91 98765 43210"
-  );
-  const [addressLine, setAddressLine] = useState(
-    "Flat 402, Greenfield Heights, Indiranagar"
-  );
-  const [city, setCity] = useState("Bengaluru");
-  const [state, setState] = useState("Karnataka");
-  const [pincode, setPincode] = useState("560038");
+  const [customerName, setCustomerName] = useState("");
+  const [customerEmail, setCustomerEmail] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
+  const [addressLine, setAddressLine] = useState("");
+  const [city, setCity] = useState("");
+  const [state, setState] = useState("");
+  const [pincode, setPincode] = useState("");
+  const [promoCode, setPromoCode] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   /*
-   * Calculate cart totals.
+   * The last order created from this drawer. If the customer closes
+   * Razorpay and comes back with the same cart and details, that order
+   * (and its stock hold) is reused instead of creating another one.
+   */
+  const [lastOrder, setLastOrder] = useState<{
+    signature: string;
+    order: Order;
+  } | null>(null);
+
+  useEffect(() => {
+    if (items.length === 0) {
+      setLastOrder(null);
+    }
+  }, [items.length]);
+
+  /*
+   * Display estimate only. The server re-prices every line and
+   * applies bundle savings and promo codes when the order is created.
    */
   const subtotal = items.reduce(
     (sum, item) => sum + item.price * item.quantity,
     0
   );
 
-  const safeBundleDiscount = Math.min(
-    Math.max(bundleDiscount, 0),
-    subtotal
-  );
-
-  const totalAmount = Math.max(
-    0,
-    subtotal - safeBundleDiscount
-  );
+  const hasBundleItems = items.some((item) => item.is_upsell);
 
   /*
    * Create local order + Razorpay order on backend.
@@ -143,8 +149,15 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
         customer_email: customerEmail.trim(),
         customer_phone: customerPhone.trim(),
         shipping_address: shippingAddress,
-        items,
-        bundle_discount: safeBundleDiscount,
+        items: items.map((item) => ({
+          product_id: item.product_id,
+          quantity: item.quantity,
+          size: item.size,
+          color: item.color,
+          is_upsell: item.is_upsell,
+        })),
+        promo_code: promoCode.trim() || undefined,
+        session_id: sessionId,
       };
 
       /*
@@ -155,12 +168,29 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
        * The backend creates the Razorpay Order and
        * returns razorpay_order_id.
        */
+      const signature = JSON.stringify(payload);
+
+      const holdStillValid =
+        lastOrder?.order.status === "created" &&
+        (!lastOrder.order.reservation_expires_at ||
+          new Date(lastOrder.order.reservation_expires_at).getTime() >
+            Date.now() + 30_000);
+
+      if (lastOrder && lastOrder.signature === signature && holdStillValid) {
+        onProceedToRazorpay(lastOrder.order);
+        return;
+      }
+
       const createdOrder = await apiPost<Order>(
         "/orders",
         payload
       );
 
-      toast.success("Order created. Opening Razorpay...");
+      setLastOrder({ signature, order: createdOrder });
+
+      toast.success(
+        `Order created for ₹${createdOrder.total_amount.toLocaleString("en-IN")}. Opening Razorpay...`
+      );
 
       /*
        * Send the created order to the parent.
@@ -276,7 +306,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
 
               {items.map((item) => (
                 <div
-                  key={item.product_id}
+                  key={item.line_id}
                   data-testid={`cart-item-${item.product_id}`}
                   className="flex items-center gap-3 rounded-2xl border border-zinc-800/80 bg-zinc-900 p-3"
                 >
@@ -337,7 +367,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                       data-testid={`cart-remove-${item.product_id}`}
                       type="button"
                       onClick={() =>
-                        onRemoveItem(item.product_id)
+                        onRemoveItem(item.line_id)
                       }
                       className="p-1 text-zinc-500 transition-colors hover:text-red-400"
                       title="Remove item"
@@ -351,7 +381,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                         type="button"
                         onClick={() =>
                           onUpdateQuantity(
-                            item.product_id,
+                            item.line_id,
                             -1
                           )
                         }
@@ -370,7 +400,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                         type="button"
                         onClick={() =>
                           onUpdateQuantity(
-                            item.product_id,
+                            item.line_id,
                             1
                           )
                         }
@@ -560,6 +590,30 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   />
                 </div>
               </div>
+
+              {/* Promo code */}
+
+              <div>
+                <label
+                  htmlFor="checkout-promo"
+                  className="mb-1 flex items-center gap-1 text-[11px] text-zinc-400"
+                >
+                  <Tag className="h-3 w-3" />
+                  Promo code (optional)
+                </label>
+
+                <input
+                  id="checkout-promo"
+                  data-testid="checkout-promo-input"
+                  type="text"
+                  value={promoCode}
+                  onChange={(event) =>
+                    setPromoCode(event.target.value.toUpperCase())
+                  }
+                  placeholder="e.g. RUNFAST15"
+                  className="h-9 w-full rounded-md border border-zinc-800 bg-zinc-900 px-3 font-mono text-xs text-zinc-100 outline-none transition focus:border-blue-500"
+                />
+              </div>
             </form>
           )}
         </div>
@@ -574,7 +628,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
 
             <div className="space-y-1.5 text-xs">
               <div className="flex justify-between text-zinc-400">
-                <span>Items Subtotal:</span>
+                <span>Items subtotal (before savings):</span>
 
                 <span className="font-mono">
                   ₹
@@ -585,34 +639,12 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 </span>
               </div>
 
-              {safeBundleDiscount > 0 && (
-                <div className="flex justify-between font-semibold text-emerald-400">
-                  <span>AI Bundle Savings:</span>
-
-                  <span className="font-mono">
-                    -₹
-                    {safeBundleDiscount.toLocaleString(
-                      "en-IN",
-                      {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      }
-                    )}
-                  </span>
-                </div>
-              )}
-
-              <div className="flex justify-between border-t border-zinc-800 pt-2 text-sm font-bold text-white">
-                <span>Total:</span>
-
-                <span className="font-mono text-blue-400">
-                  ₹
-                  {totalAmount.toLocaleString("en-IN", {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2,
-                  })}
-                </span>
-              </div>
+              <p className="text-[10px] leading-4 text-zinc-500">
+                {hasBundleItems
+                  ? "Bundle savings and any promo code are applied by the server when the order is created. "
+                  : "Any promo code is applied by the server when the order is created. "}
+                You'll see the final total before paying.
+              </p>
             </div>
 
             {/* Razorpay button */}
@@ -655,14 +687,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 <>
                   <Zap className="h-4 w-4 fill-amber-300 text-amber-300" />
 
-                  <span>
-                    Proceed to Razorpay (₹
-                    {totalAmount.toLocaleString("en-IN", {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })}
-                    )
-                  </span>
+                  <span>Create order &amp; pay</span>
                 </>
               )}
             </button>

@@ -1,28 +1,49 @@
-# Nexus AI Commerce & Autonomous Merchant Platform - Living Specification
+# Nexus AI Commerce: Living Specification
+
 ## Overview
-An end-to-end Conversational AI Shopping Agent & Autonomous Merchant Platform solving the complete chain:
-**User → AI Agent → Understand Intent → Search Merchant Catalog → Check Price + Inventory → Recommend Product → Upsell / Cross-sell → User Approval → Create Order → Razorpay Test Payment → Audit Transaction.**
-## Key Architecture & Flows
-### 1. Customer Conversational AI Agent (Storefront)
-Natural language query understanding ("I need running shoes under ₹3,000", "AMOLED smartwatch under ₹4,000", etc.).- Deep Intent & Budget Extraction (price caps, category mapping, performance feat
-Live Merchant Catalog Vector/Database Search.- Real-time Warehouse Inventory & Stock check.- High-Converting Product Recommendation Cards with size/color pickers, stock badges, and side-by-side comparison.- Smart 1-Click Upsell / Cross-Sell Engine (e.g., anti-blister running socks, sneaker protector spray, gym bottle) with automatic bundle savings.- 1-Click Buy with Razorpay test checkout session generation.
-### 2. Live Agent Decision & Intent Inspector
-Real-time transparent visual trace of:
-1. Natural Language Intent Parsed
-2. Merchant Catalog Query Constraints
-3. Live Warehouse Inventory Verification
-4. Recommendation Rationale & Cushion/Value Scoring
-5 Upsell Strategy Matching
 
-6. Razorpay Payment Gateway Link
-### 3. Razorpay Test Checkout Simulator
-Modeled after Razorpay authentic checkout experience.
-Supports UPI (GPay, PhonePe, Paytm, QR Scan), Test Cards, and NetBanking.
-- Instant payment verification with generated Payment ID (`pay_XXXXX`), stock deduction, and digital audit invoice.
+A conversational shopping agent and merchant dashboard covering the full chain:
 
-### 4. Merchant Inventory & Catalog Hub-
- Live SKU inventory control, stock quantity adjustments (+/-), add new SKU, edit price/MRP, and low-stock alerts.
-### 5. Autonomous Marketing Campaign Orchestrator- 
-AI Agent that autonomously plans, writes copy, executes, and monitors multi-channel marketing campaigns (WhatsApp, SMS, Email) with promo codes and forecasted ROAS/GMV.
-### 6. Transparent Audit Ledger- 
-Real-time transaction history, GMV metrics, latency tracking, and filterable event stream with expandable JSON logs.
+**Customer → AI agent → understand intent → search catalog → check price and stock → recommend → cross-sell → customer approval → create order → Razorpay Test Mode payment → audit.**
+
+Guiding rule: the language model writes words, never facts. Products, prices, stock, discounts and totals come from MongoDB and are computed on the server.
+
+## 1. Conversational agent (storefront)
+
+- Natural-language requests such as "running shoes under ₹3,000" or "AMOLED smartwatch under ₹4,000".
+- Intent extraction: category from the first product noun, price range (max, min, ranges, `k`/`thousand`/`lakh`), feature keywords, and relative follow-ups ("cheaper", "more premium") resolved against the previous turn.
+- Catalog search over in-stock products, ranked by keyword match, featured flag and rating.
+- Cross-sell from the merchant's `upsell_product_ids`, falling back to top-rated accessories.
+- Gemini generates the reply from the verified results. A fact check rejects replies with prices or products not in the results; the template reply is used instead.
+- Product cards with size and colour pickers, stock badges and add-to-cart / buy-now.
+
+## 2. Agent decision inspector
+
+Shows, per turn:
+
+1. Extracted intent (category, price range, keywords)
+2. Catalog query and number of matches
+3. Stock of the top pick
+4. Recommendation rationale, including constraints not met
+5. Cross-sell reason
+6. Constraint match (share of stated constraints the top pick meets), measured turn time, and the fact-check result
+
+## 3. Checkout
+
+- Client sends product IDs, quantities, options, an optional promo code and the chat session ID.
+- Server prices each line, applies the bundle saving (₹150 per cross-sell unit bought with its linked product) and any active campaign's promo code for its category.
+- Stock is reserved atomically on order creation and held for `RESERVATION_MINUTES` (default 15). Expired orders release stock.
+- Razorpay Standard Checkout (UPI, cards, netbanking, wallets in Test Mode).
+- Verification: signature check, then the payment is fetched from Razorpay to confirm order ID, amount and method. A `payment.captured` webhook is the backup path. Marking paid is atomic and idempotent.
+
+## 4. Merchant inventory hub
+
+Add and edit SKUs, price and MRP (discount computed), stock adjustments, delete, low-stock count and inventory value. Requires the merchant key.
+
+## 5. Campaign drafts
+
+Gemini drafts WhatsApp and SMS copy for a goal, category and discount. Each campaign gets a unique promo code and starts as a draft; activating it makes the code redeemable at checkout. No performance forecast is generated, and messages are not sent from the app.
+
+## 6. Audit ledger
+
+Filterable event stream (intent, search, fact check, recommendation, cross-sell, order created, expired, payment verified or failed, product created, campaign drafted) with expandable JSON details. Metrics: GMV, orders, checkout completion rate, AI conversion (paid orders linked to a chat session ÷ sessions), SKUs, low stock, and average agent turn time.

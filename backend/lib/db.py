@@ -1,4 +1,5 @@
 import os
+from datetime import timezone
 
 from motor.motor_asyncio import AsyncIOMotorClient
 
@@ -14,7 +15,9 @@ DATABASE_NAME = (
 	or "nexus_ai_commerce"
 )
 
-client = AsyncIOMotorClient(MONGO_URL)
+# tz_aware so datetimes read back are UTC-aware and serialize with an
+# offset; naive values would be read as local time by browsers.
+client = AsyncIOMotorClient(MONGO_URL, tz_aware=True, tzinfo=timezone.utc)
 db = client[DATABASE_NAME]
 
 
@@ -24,6 +27,9 @@ async def ensure_indexes():
 	await db.products.create_index("category")
 	await db.products.create_index("sku", unique=True)
 	await db.orders.create_index("id", unique=True)
+	await db.orders.create_index("razorpay_order_id")
+	await db.orders.create_index([("status", 1), ("reservation_expires_at", 1)])
+	await db.campaigns.create_index("discount_code")
 	await db.campaigns.create_index("id", unique=True)
 	await db.audit_events.create_index("id", unique=True)
 	await db.chat_sessions.create_index("id", unique=True)

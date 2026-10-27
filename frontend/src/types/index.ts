@@ -98,7 +98,9 @@ export interface AgentReasoningStep {
   intent_summary: string;
 
   budget_extracted: number | null;
+  budget_min_extracted?: number | null;
   category_extracted: string | null;
+  keywords?: string[];
 
   catalog_matches_found: number;
 
@@ -107,8 +109,14 @@ export interface AgentReasoningStep {
   recommendation_rationale: string;
   upsell_strategy: string;
 
+  // Measured time for the whole agent turn.
   execution_time_ms: number;
-  confidence_score: number;
+
+  // Share of the customer's constraints the top pick meets (0–1),
+  // null when the customer gave none.
+  confidence_score: number | null;
+
+  reply_guardrail?: "passed" | "replaced" | "fallback" | null;
 }
 
 export interface ChatMessage {
@@ -183,6 +191,7 @@ export interface OrderItem {
 
   name: string;
   brand: string;
+  category?: string | null;
 
   price: number;
   original_price: number;
@@ -195,6 +204,12 @@ export interface OrderItem {
   is_upsell: boolean;
 
   image_url?: string;
+}
+
+// A line in the browser cart. line_id distinguishes sizes, colours and
+// bundle items of the same product.
+export interface CartLine extends OrderItem {
+  line_id: string;
 }
 
 export interface Order {
@@ -212,8 +227,12 @@ export interface Order {
 
   items: OrderItem[];
 
+  session_id?: string | null;
+
   subtotal: number;
   bundle_discount: number;
+  promo_code?: string | null;
+  promo_discount?: number;
   tax: number;
   total_amount: number;
 
@@ -221,18 +240,16 @@ export interface Order {
 
   status:
     | "created"
-    | "processing"
     | "paid"
+    | "expired"
     | "failed"
     | "shipped";
 
-  payment_method?:
-    | "upi"
-    | "card"
-    | "netbanking"
-    | "wallet"
-    | string
-    | null;
+  stock_reserved?: boolean;
+  reservation_expires_at?: string | null;
+
+  // Reported by Razorpay, not chosen by the browser.
+  payment_method?: string | null;
 
   payment_details?: Record<string, unknown>;
 
@@ -243,6 +260,16 @@ export interface Order {
   paid_at?: string | null;
 }
 
+// What the browser may send for each line. Prices, names and
+// discounts are looked up and computed by the server.
+export interface OrderItemRequest {
+  product_id: string;
+  quantity: number;
+  size?: string;
+  color?: string;
+  is_upsell?: boolean;
+}
+
 export interface OrderCreate {
   customer_name: string;
   customer_email: string;
@@ -250,11 +277,11 @@ export interface OrderCreate {
 
   shipping_address: Address;
 
-  items: OrderItem[];
+  items: OrderItemRequest[];
 
-  bundle_discount: number;
+  promo_code?: string;
 
-  agent_thought_snapshot?: AgentReasoningStep | null;
+  session_id?: string;
 }
 
 
@@ -268,14 +295,6 @@ export interface PaymentVerifyRequest {
   razorpay_payment_id: string;
 
   razorpay_signature: string;
-
-  payment_method:
-    | "upi"
-    | "card"
-    | "netbanking"
-    | "wallet";
-
-  payment_details: Record<string, unknown>;
 }
 
 
@@ -353,6 +372,9 @@ export interface CampaignCreate {
 
   target_audience: string;
 
+  // Category the promo code applies to; "all" for every product.
+  target_category?: string;
+
   channels: string[];
 
   whatsapp_copy: string;
@@ -376,11 +398,14 @@ export interface AuditEvent {
     | "INTENT_PARSED"
     | "CATALOG_SEARCH"
     | "INVENTORY_CHECK"
-    | "RECOMMENDATION_DISPATCHED"
-    | "UPSELL_TRIGGERED"
+    | "PRODUCT_CREATED"
+    | "PRODUCT_RECOMMENDED"
+    | "UPSELL_SUGGESTED"
+    | "GUARDRAIL_CHECK"
     | "ORDER_CREATED"
+    | "ORDER_EXPIRED"
     | "PAYMENT_VERIFIED"
-    | "RAZORPAY_PAYMENT_SUCCESS"
+    | "PAYMENT_FAILED"
     | "CAMPAIGN_AUTO_LAUNCHED"
     | string;
 
@@ -400,7 +425,8 @@ export interface AuditEvent {
     | "error"
     | "info";
 
-  latency_ms: number;
+  // Only set for events with a measured duration (an agent turn).
+  latency_ms: number | null;
 
   created_at: string;
 }

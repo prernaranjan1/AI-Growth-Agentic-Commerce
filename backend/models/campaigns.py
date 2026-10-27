@@ -4,6 +4,10 @@ from datetime import datetime, timezone
 import uuid
 
 
+# Shown instead of a made-up number until real campaign data exists.
+NO_FORECAST = "Not forecast: no campaign history to model from yet"
+
+
 class CampaignMetrics(BaseModel):
     sent_count: int = Field(default=0, ge=0)
     clicks: int = Field(default=0, ge=0)
@@ -33,7 +37,7 @@ class Campaign(BaseModel):
     discount_code: str
     discount_percent: int = Field(default=15, ge=0, le=100)
 
-    forecasted_roi: str
+    forecasted_roi: str = NO_FORECAST
 
     target_category: str = "footwear"
 
@@ -63,6 +67,8 @@ class CampaignCreate(BaseModel):
     title: str
     goal: str
     target_audience: str
+    # Category the promo code applies to; "all" for every product.
+    target_category: str = "all"
     channels: List[str]
     whatsapp_copy: str
     sms_copy: str

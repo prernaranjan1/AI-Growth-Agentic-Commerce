@@ -1,76 +1,174 @@
+import json
+import logging
+import os
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
-import uuid
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
 import razorpay
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from pymongo import ReturnDocument
 
+from lib.audit import record_event
+from lib.auth import require_merchant
 from lib.db import db
-from lib.razorpay_client import client as razorpay_client  # adjust import if your client lives elsewhere
+from lib.inventory import (
+    release_expired_reservations,
+    release_items,
+    reservation_ttl,
+    reserve_items,
+    try_reserve_items,
+)
+from lib.pricing import price_order
+from lib.razorpay_client import get_razorpay_client, run_razorpay
+from models.agent import AgentReasoningStep
 from models.orders import Order, OrderCreate, PaymentVerifyRequest
-from models.audit import AuditEvent
 
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/orders",
-    tags=["orders"]
+    tags=["orders"],
 )
 
 
-def _to_paise(amount: float) -> int:
-    """Convert a rupee amount to integer paise using Decimal,
-    avoiding float rounding drift."""
+def to_paise(amount: float) -> int:
+    """Convert rupees to integer paise without float rounding drift."""
     return int(
-        (Decimal(str(amount)) * 100).quantize(
-            Decimal("1"), rounding=ROUND_HALF_UP
-        )
+        (Decimal(str(amount)) * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
     )
 
 
+async def _latest_reasoning(session_id: Optional[str]) -> Optional[AgentReasoningStep]:
+    """The agent's last reasoning in this chat, read from the server's copy."""
+    if not session_id:
+        return None
+
+    session = await db.chat_sessions.find_one({"id": session_id})
+
+    if not session:
+        return None
+
+    for message in reversed(session.get("messages", [])):
+        if message.get("role") == "assistant" and message.get("agent_reasoning"):
+            return AgentReasoningStep(**message["agent_reasoning"])
+
+    return None
+
+
+def _payment_summary(entity: Dict[str, Any], source: str) -> Dict[str, Any]:
+    details = {
+        key: entity.get(key)
+        for key in ("status", "vpa", "bank", "wallet", "card_id")
+        if entity.get(key)
+    }
+    details["source"] = source
+    return details
+
+
 # =========================================================
-# GET ALL ORDERS
+# MARK PAID (shared by client verification and webhook)
 # =========================================================
 
-@router.get("", response_model=List[Order])
+async def _mark_paid(
+    order_id: str,
+    payment_id: str,
+    payment_method: Optional[str],
+    payment_details: Dict[str, Any],
+) -> Order:
+    now = datetime.now(timezone.utc)
+
+    # Atomic transition: only one caller (browser callback or webhook)
+    # moves the order to "paid"; everyone else just reads the result.
+    before = await db.orders.find_one_and_update(
+        {"id": order_id, "status": {"$in": ["created", "expired", "failed"]}},
+        {
+            "$set": {
+                "status": "paid",
+                "razorpay_payment_id": payment_id,
+                "payment_method": payment_method,
+                "payment_details": payment_details,
+                "paid_at": now,
+            }
+        },
+        return_document=ReturnDocument.BEFORE,
+    )
+
+    if before is None:
+        current = await db.orders.find_one({"id": order_id})
+        return Order(**current)
+
+    order = Order(**before)
+    stock_ok = True
+
+    # The hold may have lapsed before the customer finished paying.
+    # Try to reserve again; if that fails, flag the order for a refund.
+    if not order.stock_reserved:
+        stock_ok = await try_reserve_items(order.items)
+
+        await db.orders.update_one(
+            {"id": order_id},
+            {
+                "$set": {
+                    "stock_reserved": stock_ok,
+                    "payment_details.stock_conflict": not stock_ok,
+                }
+            },
+        )
+
+    method_label = (payment_method or "unknown").upper()
+
+    await record_event(
+        "PAYMENT_VERIFIED",
+        "Razorpay Payment Verified",
+        (
+            f"Payment {payment_id} captured for order {order.id} "
+            f"(₹{order.total_amount:,.2f} via {method_label})"
+            + ("" if stock_ok else ". Stock was no longer available: refund or restock needed.")
+        ),
+        order_id=order.id,
+        session_id=order.session_id,
+        details={
+            "razorpay_order_id": order.razorpay_order_id,
+            "razorpay_payment_id": payment_id,
+            "amount_paid": order.total_amount,
+            "payment_method": payment_method,
+            "source": payment_details.get("source"),
+            "stock_conflict": not stock_ok,
+        },
+        status="success" if stock_ok else "warning",
+    )
+
+    updated = await db.orders.find_one({"id": order_id})
+    return Order(**updated)
+
+
+# =========================================================
+# LIST ORDERS (merchant only: contains customer PII)
+# =========================================================
+
+@router.get("", response_model=List[Order], dependencies=[Depends(require_merchant)])
 async def get_orders(
     status: Optional[str] = Query(None),
-    limit: int = Query(50, ge=1, le=200)
+    limit: int = Query(50, ge=1, le=200),
 ):
-    query = {}
+    query: Dict[str, Any] = {}
 
     if status and status != "all":
         query["status"] = status
 
-    docs = (
-        await db.orders
-        .find(query)
-        .sort("created_at", -1)
-        .to_list(limit)
-    )
+    docs = await db.orders.find(query).sort("created_at", -1).to_list(limit)
 
-    return [
-        Order(**doc)
-        for doc in docs
-    ]
+    return [Order(**doc) for doc in docs]
 
 
-# =========================================================
-# GET SINGLE ORDER
-# =========================================================
-
-@router.get("/{id}", response_model=Order)
+@router.get("/{id}", response_model=Order, dependencies=[Depends(require_merchant)])
 async def get_order(id: str):
-
-    doc = await db.orders.find_one({
-        "id": id
-    })
+    doc = await db.orders.find_one({"id": id})
 
     if not doc:
-        raise HTTPException(
-            status_code=404,
-            detail="Order not found"
-        )
+        raise HTTPException(status_code=404, detail="Order not found")
 
     return Order(**doc)
 
@@ -80,311 +178,248 @@ async def get_order(id: str):
 # =========================================================
 
 @router.post("", response_model=Order)
-async def create_order(
-    payload: OrderCreate
-):
+async def create_order(payload: OrderCreate):
+    await release_expired_reservations()
 
-    # -----------------------------------------------------
-    # Calculate subtotal
-    # -----------------------------------------------------
+    # 1. Price everything from the catalog.
+    priced = await price_order(payload.items, payload.promo_code)
 
-    subtotal = sum(
-        item.price * item.quantity
-        for item in payload.items
-    )
+    if priced.total <= 0:
+        raise HTTPException(status_code=400, detail="Order total must be above ₹0.")
 
-    # -----------------------------------------------------
-    # Apply bundle discount
-    # -----------------------------------------------------
+    client = get_razorpay_client()
 
-    discount = payload.bundle_discount
+    # 2. Hold the stock so it can't be sold twice while the customer pays.
+    await reserve_items(priced.items)
 
-    total = max(
-        0.0,
-        subtotal - discount
-    )
-
-    # -----------------------------------------------------
-    # Create the order on Razorpay's side FIRST so we have a
-    # real razorpay_order_id to store — it's required and has
-    # no default; nothing downstream (signature verification)
-    # works without a genuine Razorpay-issued order id.
-    # -----------------------------------------------------
-
+    # 3. Create the Razorpay order for the server-computed amount.
     try:
-        razorpay_order = razorpay_client.order.create({
-            "amount": _to_paise(total),
-            "currency": "INR",
-            "payment_capture": 1,
-        })
-    except Exception as exc:
+        razorpay_order = await run_razorpay(
+            client.order.create,
+            {
+                "amount": to_paise(priced.total),
+                "currency": "INR",
+                "payment_capture": 1,
+            },
+        )
+    except Exception:
+        await release_items(priced.items)
+        logger.exception("Razorpay order creation failed")
         raise HTTPException(
             status_code=502,
-            detail=f"Failed to create Razorpay order: {exc}"
+            detail="Could not create the Razorpay order. Please try again.",
         )
-
-    # -----------------------------------------------------
-    # Create order
-    # -----------------------------------------------------
 
     order = Order(
         razorpay_order_id=razorpay_order["id"],
+        session_id=payload.session_id,
         customer_name=payload.customer_name,
         customer_email=payload.customer_email,
         customer_phone=payload.customer_phone,
         shipping_address=payload.shipping_address,
-        items=payload.items,
-        subtotal=subtotal,
-        bundle_discount=discount,
+        items=priced.items,
+        subtotal=priced.subtotal,
+        bundle_discount=priced.bundle_discount,
+        promo_code=priced.promo_code,
+        promo_discount=priced.promo_discount,
         tax=0.0,
-        total_amount=total,
-        currency="INR",
+        total_amount=priced.total,
         status="created",
-        agent_thought_snapshot=payload.agent_thought_snapshot
+        stock_reserved=True,
+        reservation_expires_at=datetime.now(timezone.utc) + reservation_ttl(),
+        agent_thought_snapshot=await _latest_reasoning(payload.session_id),
     )
 
-    await db.orders.insert_one(
-        order.model_dump()
-    )
+    try:
+        await db.orders.insert_one(order.model_dump())
+    except Exception:
+        # Without an order document the expiry loop can't find this hold.
+        await release_items(priced.items)
+        raise
 
-    # -----------------------------------------------------
-    # Audit log
-    # -----------------------------------------------------
-
-    audit_evt = AuditEvent(
-        event_type="ORDER_CREATED",
-        order_id=order.id,
-        title="Customer Order Created",
-        description=(
-            f"Order {order.id} generated for "
-            f"{order.customer_name} - "
-            f"Total: ₹{order.total_amount:,.0f}"
+    await record_event(
+        "ORDER_CREATED",
+        "Customer Order Created",
+        (
+            f"Order {order.id} created for {order.customer_name}, "
+            f"total ₹{order.total_amount:,.2f}; stock reserved."
         ),
+        order_id=order.id,
+        session_id=order.session_id,
         details={
-            "order_id": order.id,
             "razorpay_order_id": order.razorpay_order_id,
+            "subtotal": order.subtotal,
+            "bundle_discount": order.bundle_discount,
+            "promo_code": order.promo_code,
+            "promo_discount": order.promo_discount,
             "total_amount": order.total_amount,
             "items_count": len(order.items),
-            "bundle_discount": order.bundle_discount
         },
-        status="info"
-    )
-
-    await db.audit_events.insert_one(
-        audit_evt.model_dump()
+        status="info",
     )
 
     return order
 
 
 # =========================================================
-# VERIFY PAYMENT
+# VERIFY PAYMENT (browser callback after Razorpay Checkout)
 # =========================================================
 
-@router.post(
-    "/{id}/verify-payment",
-    response_model=Order
-)
-async def verify_payment(
-    id: str,
-    payload: PaymentVerifyRequest
-):
-
-    # -----------------------------------------------------
-    # Find order
-    # -----------------------------------------------------
-
-    order_doc = await db.orders.find_one({
-        "id": id
-    })
+@router.post("/{id}/verify-payment", response_model=Order)
+async def verify_payment(id: str, payload: PaymentVerifyRequest):
+    order_doc = await db.orders.find_one({"id": id})
 
     if not order_doc:
-        raise HTTPException(
-            status_code=404,
-            detail="Order not found"
-        )
+        raise HTTPException(status_code=404, detail="Order not found")
 
     order = Order(**order_doc)
 
-    # -----------------------------------------------------
-    # Prevent processing an already paid order
-    # -----------------------------------------------------
-
-    if order.status == "paid":
-        return order
-
-    # -----------------------------------------------------
-    # Reject if the payment doesn't even claim to belong to
-    # this order's Razorpay order — otherwise a valid
-    # signature for a different order could be replayed here.
-    # -----------------------------------------------------
-
+    # A valid signature for a different order must not be replayable here.
     if payload.razorpay_order_id != order.razorpay_order_id:
         raise HTTPException(
             status_code=400,
-            detail="razorpay_order_id does not match this order"
+            detail="razorpay_order_id does not match this order",
         )
 
-    # -----------------------------------------------------
-    # Verify the payment signature with Razorpay directly —
-    # this is the actual security check. Never trust a
-    # client-supplied success/failure flag.
-    # -----------------------------------------------------
+    client = get_razorpay_client()
 
     try:
-        razorpay_client.utility.verify_payment_signature({
-            "razorpay_order_id": payload.razorpay_order_id,
-            "razorpay_payment_id": payload.razorpay_payment_id,
-            "razorpay_signature": payload.razorpay_signature,
-        })
-        signature_valid = True
-    except razorpay.errors.SignatureVerificationError:
-        signature_valid = False
-
-    if not signature_valid:
-
-        # Guard the update so two concurrent failed calls
-        # can't both flip status back and forth.
-        await db.orders.update_one(
-            {"id": id, "status": {"$ne": "paid"}},
+        client.utility.verify_payment_signature(
             {
-                "$set": {
-                    "status": "failed"
-                }
+                "razorpay_order_id": payload.razorpay_order_id,
+                "razorpay_payment_id": payload.razorpay_payment_id,
+                "razorpay_signature": payload.razorpay_signature,
             }
         )
-
-        audit_evt = AuditEvent(
-            event_type="PAYMENT_FAILED",
+    except razorpay.errors.SignatureVerificationError:
+        # Don't change the order: a forged call must not be able to
+        # cancel someone else's checkout or release their stock.
+        await record_event(
+            "PAYMENT_FAILED",
+            "Payment Signature Rejected",
+            f"Signature verification failed for order {order.id}.",
             order_id=order.id,
-            title="Razorpay Payment Verification Failed",
-            description=(
-                f"Signature verification failed for order "
-                f"{order.id} during checkout."
-            ),
+            session_id=order.session_id,
             details={
                 "razorpay_order_id": payload.razorpay_order_id,
                 "razorpay_payment_id": payload.razorpay_payment_id,
-                "payment_method": payload.payment_method
             },
-            status="error"
+            status="error",
         )
+        raise HTTPException(status_code=400, detail="Payment signature is invalid.")
 
-        await db.audit_events.insert_one(
-            audit_evt.model_dump()
-        )
+    # Checked only after the signature, so the order's customer details are
+    # never returned to someone who merely knows its id.
+    if order.status == "paid":
+        return order
 
-        updated = await db.orders.find_one({
-            "id": id
-        })
+    # Read the payment from Razorpay instead of trusting the browser for
+    # the method, amount and status.
+    method: Optional[str] = None
+    details: Dict[str, Any] = {"source": "checkout_callback"}
 
-        return Order(**updated)
+    try:
+        payment = await run_razorpay(client.payment.fetch, payload.razorpay_payment_id)
+    except Exception:
+        # The signature already proves this payment belongs to this order,
+        # whose amount we set. Accept it and record that details are missing.
+        logger.warning("Could not fetch payment %s from Razorpay", payload.razorpay_payment_id)
+        payment = None
 
-    # -----------------------------------------------------
-    # SUCCESS PAYMENT
-    #
-    # Atomic guard: only proceed with stock deduction if this
-    # call is the one that actually flips status -> paid.
-    # Prevents double-deduction from a retry race.
-    # -----------------------------------------------------
-
-    now = datetime.now(timezone.utc)
-
-    update_fields = {
-        "status": "paid",
-        "razorpay_payment_id": payload.razorpay_payment_id,
-        "payment_method": payload.payment_method,
-        "payment_details": payload.payment_details,
-        "paid_at": now
-    }
-
-    update_result = await db.orders.update_one(
-        {"id": id, "status": {"$ne": "paid"}},
-        {
-            "$set": update_fields
-        }
-    )
-
-    if update_result.modified_count == 0:
-        # Another concurrent request already marked it paid —
-        # don't deduct stock twice.
-        updated = await db.orders.find_one({"id": id})
-        return Order(**updated)
-
-    # -----------------------------------------------------
-    # Deduct stock
-    # -----------------------------------------------------
-
-    for item in order.items:
-
-        await db.products.update_one(
-            {"id": item.product_id},
-            {
-                "$inc": {
-                    "stock_quantity": -item.quantity
-                }
-            }
-        )
-
-        # Check remaining stock
-        product = await db.products.find_one({
-            "id": item.product_id
-        })
-
-        if product:
-
-            remaining_stock = product.get(
-                "stock_quantity",
-                0
+    if payment is not None:
+        if (
+            payment.get("order_id") != order.razorpay_order_id
+            or int(payment.get("amount", -1)) != to_paise(order.total_amount)
+        ):
+            await record_event(
+                "PAYMENT_FAILED",
+                "Payment Did Not Match Order",
+                f"Payment {payload.razorpay_payment_id} does not match order {order.id}.",
+                order_id=order.id,
+                details={
+                    "expected_paise": to_paise(order.total_amount),
+                    "payment_amount": payment.get("amount"),
+                    "payment_order_id": payment.get("order_id"),
+                },
+                status="error",
             )
+            raise HTTPException(status_code=400, detail="Payment does not match this order.")
 
-            if remaining_stock <= 0:
+        method = payment.get("method")
+        details = _payment_summary(payment, "checkout_callback")
 
-                await db.products.update_one(
-                    {"id": item.product_id},
-                    {
-                        "$set": {
-                            "in_stock": False,
-                            "stock_quantity": 0
-                        }
-                    }
-                )
+    return await _mark_paid(order.id, payload.razorpay_payment_id, method, details)
 
-    # -----------------------------------------------------
-    # Audit successful payment
-    # -----------------------------------------------------
 
-    audit_evt = AuditEvent(
-        event_type="PAYMENT_VERIFIED",
-        order_id=order.id,
-        title="Razorpay Payment Verified & Captured",
-        description=(
-            f"Payment {payload.razorpay_payment_id} captured for "
-            f"Order {order.id} "
-            f"(₹{order.total_amount:,.0f} "
-            f"via {payload.payment_method.upper()})"
-        ),
-        details={
-            "order_id": order.id,
-            "razorpay_order_id": order.razorpay_order_id,
-            "razorpay_payment_id": payload.razorpay_payment_id,
-            "amount_paid": order.total_amount,
-            "payment_method": payload.payment_method,
-            "payment_details": payload.payment_details
-        },
-        status="success"
-    )
+# =========================================================
+# RAZORPAY WEBHOOK
+#
+# Configure in Razorpay Dashboard -> Webhooks with events
+# payment.captured and payment.failed, pointing to
+# {APP_URL}/api/orders/webhook/razorpay. This is what marks
+# an order paid when the customer closes the tab before the
+# browser callback runs.
+# =========================================================
 
-    await db.audit_events.insert_one(
-        audit_evt.model_dump()
-    )
+@router.post("/webhook/razorpay")
+async def razorpay_webhook(
+    request: Request,
+    x_razorpay_signature: Optional[str] = Header(default=None),
+):
+    secret = os.getenv("RAZORPAY_WEBHOOK_SECRET")
 
-    # -----------------------------------------------------
-    # Return updated order
-    # -----------------------------------------------------
+    if not secret:
+        raise HTTPException(status_code=503, detail="RAZORPAY_WEBHOOK_SECRET is not set.")
 
-    updated = await db.orders.find_one({
-        "id": id
-    })
+    body = (await request.body()).decode("utf-8")
 
-    return Order(**updated)
+    try:
+        get_razorpay_client().utility.verify_webhook_signature(
+            body, x_razorpay_signature or "", secret
+        )
+    except razorpay.errors.SignatureVerificationError:
+        raise HTTPException(status_code=400, detail="Invalid webhook signature.")
+
+    event = json.loads(body)
+    event_type = event.get("event")
+    entity = event.get("payload", {}).get("payment", {}).get("entity", {})
+
+    order_doc = await db.orders.find_one({"razorpay_order_id": entity.get("order_id")})
+
+    # Acknowledge events for orders we don't know so Razorpay stops retrying.
+    if not order_doc:
+        return {"status": "ignored"}
+
+    order = Order(**order_doc)
+
+    if event_type == "payment.captured":
+        if int(entity.get("amount", -1)) != to_paise(order.total_amount):
+            logger.error("Webhook amount mismatch for order %s", order.id)
+            return {"status": "amount_mismatch"}
+
+        await _mark_paid(
+            order.id,
+            entity["id"],
+            entity.get("method"),
+            _payment_summary(entity, "webhook"),
+        )
+        return {"status": "ok"}
+
+    if event_type == "payment.failed":
+        # The customer can retry on the same Razorpay order, so the order
+        # stays open until it is paid or its reservation expires.
+        await record_event(
+            "PAYMENT_FAILED",
+            "Razorpay Payment Failed",
+            entity.get("error_description") or f"A payment attempt failed for order {order.id}.",
+            order_id=order.id,
+            session_id=order.session_id,
+            details={
+                "razorpay_payment_id": entity.get("id"),
+                "error_code": entity.get("error_code"),
+                "method": entity.get("method"),
+            },
+            status="error",
+        )
+
+    return {"status": "ok"}

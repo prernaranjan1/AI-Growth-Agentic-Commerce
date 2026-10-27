@@ -285,7 +285,9 @@ export const AuditLedger: React.FC = () => {
 
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900/90 p-4">
           <div className="flex items-center justify-between text-xs text-zinc-400">
-            <span>AI Agent Latency</span>
+            <span title="Average measured end-to-end time per agent turn">
+              Avg Agent Turn
+            </span>
 
             <Clock className="h-4 w-4 text-amber-400" />
           </div>
@@ -309,7 +311,9 @@ export const AuditLedger: React.FC = () => {
 
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900/90 p-4">
           <div className="flex items-center justify-between text-xs text-zinc-400">
-            <span>Payment Success Rate</span>
+            <span title="Paid orders as a share of orders that were paid, failed or expired">
+              Checkout Completion
+            </span>
 
             <ShieldCheck className="h-4 w-4 text-emerald-400" />
           </div>
@@ -568,9 +572,11 @@ export const AuditLedger: React.FC = () => {
                     </div>
 
                     <div className="flex items-center gap-3 text-[11px] text-zinc-500">
-                      <span>
-                        {evt.latency_ms}ms
-                      </span>
+                      {evt.latency_ms != null && (
+                        <span>
+                          {evt.latency_ms}ms
+                        </span>
+                      )}
 
                       <span>
                         {new Date(
