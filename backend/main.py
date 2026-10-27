@@ -241,14 +241,25 @@ app.add_middleware(
 # HEALTH CHECK
 # =========================================================
 
-@app.get("/health")
-async def health_check():
+@app.get("/health/db")
+async def database_health_check():
+    try:
+        await client.admin.command("ping")
 
-    return {
-        "status": "healthy",
-        "service": "nexus-ai-commerce",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
+        return {
+            "status": "healthy",
+            "database": "connected",
+        }
+
+    except Exception:
+        logger.exception("MongoDB health check failed")
+
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=503,
+            detail="MongoDB connection failed",
+        )
 
 
 # =========================================================
