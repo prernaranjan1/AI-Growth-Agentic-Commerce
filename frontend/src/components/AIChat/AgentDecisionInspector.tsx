@@ -44,7 +44,7 @@ export const AgentDecisionInspector: React.FC<
             </h4>
 
             <p className="font-sans text-[10px] text-zinc-400">
-              Real-time audit trace of agent reasoning pipeline
+              What the agent extracted, searched and checked this turn
             </p>
           </div>
         </div>
@@ -87,15 +87,17 @@ export const AgentDecisionInspector: React.FC<
           {/* Confidence */}
 
           <div className="rounded-lg border border-zinc-800 bg-zinc-900/90 p-2 text-center">
-            <div className="text-[10px] uppercase text-zinc-500">
-              Confidence
+            <div
+              className="text-[10px] uppercase text-zinc-500"
+              title="Share of your stated constraints (category, budget, features) the top pick meets"
+            >
+              Constraint Match
             </div>
 
             <div className="text-xs font-bold text-emerald-400">
-              {Math.round(
-                reasoning.confidence_score * 100
-              )}
-              %
+              {reasoning.confidence_score == null
+                ? "—"
+                : `${Math.round(reasoning.confidence_score * 100)}%`}
             </div>
           </div>
 
@@ -137,7 +139,7 @@ export const AgentDecisionInspector: React.FC<
               </span>
 
               <span className="text-[9px] text-zinc-500">
-                LLM PARSE
+                RULE-BASED
               </span>
             </div>
 
@@ -251,7 +253,7 @@ export const AgentDecisionInspector: React.FC<
               </span>
 
               <span className="text-[9px] text-zinc-500">
-                AI RANKED
+                SCORED
               </span>
             </div>
 
@@ -282,7 +284,7 @@ export const AgentDecisionInspector: React.FC<
               </span>
 
               <span className="text-[9px] text-zinc-500">
-                BUNDLE BOOST
+                MERCHANT LINK
               </span>
             </div>
 
@@ -318,8 +320,8 @@ export const AgentDecisionInspector: React.FC<
             </div>
 
             <div className="text-xs text-zinc-300">
-              1-Click instant test checkout enabled
-              (UPI, Card, NetBanking)
+              Prices and stock are re-checked on the
+              server when you check out (Razorpay Test Mode)
             </div>
           </div>
         </div>
@@ -330,7 +332,16 @@ export const AgentDecisionInspector: React.FC<
       {/* ======================================== */}
 
       <div className="mt-4 flex items-center justify-between border-t border-zinc-800 pt-3 text-[10px] text-zinc-600">
-        <span>Agent Trace</span>
+        <span>
+          Reply fact check:{" "}
+          {reasoning?.reply_guardrail === "passed"
+            ? "AI reply verified against catalog"
+            : reasoning?.reply_guardrail === "replaced"
+              ? "AI reply failed, template used"
+              : reasoning?.reply_guardrail === "fallback"
+                ? "template reply (AI unavailable)"
+                : "—"}
+        </span>
 
         <span className="font-mono text-emerald-500/80">
           {reasoning

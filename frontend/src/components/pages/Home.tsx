@@ -13,6 +13,8 @@ import { CampaignOrchestrator } from "@/components/Merchant/CampaignOrchestrator
 
 import { AuditLedger } from "@/components/Audit/AuditLedger";
 
+import { MerchantKeyGate } from "@/components/Merchant/MerchantKeyGate";
+
 import RazorpayModal from "@/components/Checkout/RazorpayModal";
 
 import OrderSuccessModal from "@/components/Checkout/OrderSuccessModal";
@@ -21,15 +23,14 @@ import CartDrawer from "@/components/Checkout/CartDrawer";
 
 import type {
   Product,
-  OrderItem,
+  CartLine,
   Order,
-  OrderCreate,
-  Address,
 } from "@/types";
 
-import { Toaster, toast } from "sonner";
+// Per-line cap; the server also caps a whole order at 20 units.
+const MAX_QTY_PER_LINE = 10;
 
-import { apiPost } from "@/lib/api";
+import { Toaster, toast } from "sonner";
 
 export default function Home() {
   // ============================================
@@ -48,10 +49,11 @@ export default function Home() {
   // ============================================
 
   const [cartItems, setCartItems] =
-    useState<OrderItem[]>([]);
+    useState<CartLine[]>([]);
 
-  const [bundleDiscount, setBundleDiscount] =
-    useState<number>(0);
+  // Links checkout to the chat that produced it.
+  const [chatSessionId, setChatSessionId] =
+    useState<string | undefined>(undefined);
 
   const [isCartOpen, setIsCartOpen] =
     useState<boolean>(false);
@@ -101,88 +103,134 @@ export default function Home() {
 
   // ============================================
   // ADD TO CART
+  //
+  // Cart lines carry display prices for the drawer only.
+  // The server re-prices every line at checkout.
   // ============================================
+
+  const toCartLine = (
+    product: Product,
+    isUpsell: boolean,
+    size?: string,
+    color?: string
+  ): CartLine => {
+    const chosenSize =
+      size ||
+      (product.sizes?.length > 0
+        ? product.sizes[0]
+        : undefined);
+
+    const chosenColor =
+      color ||
+      (product.colors?.length > 0
+        ? product.colors[0]
+        : undefined);
+
+    return {
+    line_id: [
+      product.id,
+      chosenSize ?? "",
+      chosenColor ?? "",
+      isUpsell ? "bundle" : "item",
+    ].join("|"),
+    product_id: product.id,
+    name: product.name,
+    brand: product.brand,
+    category: product.category,
+    price: product.price,
+    original_price: product.original_price,
+    quantity: 1,
+    size: chosenSize,
+    color: chosenColor,
+    is_upsell: isUpsell,
+    image_url: product.image_url,
+    };
+  };
+
+  const addLine = (
+    product: Product,
+    options: {
+      size?: string;
+      color?: string;
+      isUpsell?: boolean;
+      incrementIfPresent?: boolean;
+    } = {}
+  ) => {
+    const line = toCartLine(
+      product,
+      options.isUpsell ?? false,
+      options.size,
+      options.color
+    );
+
+    setCartItems((previousItems) => {
+      const existingIndex =
+        previousItems.findIndex(
+          (item) => item.line_id === line.line_id
+        );
+
+      if (existingIndex === -1) {
+        return [...previousItems, line];
+      }
+
+      if (!options.incrementIfPresent) {
+        return previousItems;
+      }
+
+      const existingItem =
+        previousItems[existingIndex];
+
+      const limit = Math.min(
+        MAX_QTY_PER_LINE,
+        product.stock_quantity
+      );
+
+      if (existingItem.quantity + 1 > limit) {
+        toast.error(
+          `You can add up to ${limit} of this item`
+        );
+        return previousItems;
+      }
+
+      const updatedItems = [...previousItems];
+
+      updatedItems[existingIndex] = {
+        ...existingItem,
+        quantity: existingItem.quantity + 1,
+      };
+
+      return updatedItems;
+    });
+  };
 
   const handleAddToCart = (
     product: Product,
     size?: string,
-    color?: string
+    color?: string,
+    isUpsell = false
   ) => {
-    setCartItems((previousItems) => {
-      const existingIndex =
-        previousItems.findIndex(
-          (item) =>
-            item.product_id === product.id &&
-            item.size === size &&
-            item.color === color
-        );
+    if (
+      !product.in_stock ||
+      product.stock_quantity <= 0
+    ) {
+      toast.error(
+        "This product is currently out of stock"
+      );
+      return;
+    }
 
-      // Existing item → increase quantity.
-      if (existingIndex !== -1) {
-        const updatedItems = [
-          ...previousItems,
-        ];
-
-        const existingItem =
-          updatedItems[existingIndex];
-
-        const nextQuantity =
-          existingItem.quantity + 1;
-
-        // Prevent adding beyond available stock.
-        if (
-          nextQuantity >
-          product.stock_quantity
-        ) {
-          toast.error(
-            `Only ${product.stock_quantity} units available`
-          );
-
-          return previousItems;
-        }
-
-        updatedItems[existingIndex] = {
-          ...existingItem,
-          quantity: nextQuantity,
-        };
-
-        return updatedItems;
-      }
-
-      // New cart item.
-      return [
-        ...previousItems,
-        {
-          product_id: product.id,
-          name: product.name,
-          brand: product.brand,
-          price: product.price,
-          original_price:
-            product.original_price,
-          quantity: 1,
-
-          size:
-            size ||
-            (product.sizes?.length > 0
-              ? product.sizes[0]
-              : undefined),
-
-          color:
-            color ||
-            (product.colors?.length > 0
-              ? product.colors[0]
-              : undefined),
-
-          is_upsell: false,
-
-          image_url: product.image_url,
-        },
-      ];
+    addLine(product, {
+      size,
+      color,
+      isUpsell,
+      incrementIfPresent: true,
     });
 
-    toast.success(
-      `Added ${product.name} to cart`
-    );
+    if (!isUpsell) {
+      toast.success(
+        `Added ${product.name} to cart`
+      );
+    }
   };
 
   // ============================================
@@ -190,20 +238,20 @@ export default function Home() {
   // ============================================
 
   const handleUpdateQuantity = (
-    productId: string,
+    lineId: string,
     delta: number
   ) => {
     setCartItems((previousItems) =>
       previousItems
         .map((item) => {
-          if (
-            item.product_id !== productId
-          ) {
+          if (item.line_id !== lineId) {
             return item;
           }
 
-          const nextQuantity =
-            item.quantity + delta;
+          const nextQuantity = Math.min(
+            MAX_QTY_PER_LINE,
+            item.quantity + delta
+          );
 
           if (nextQuantity <= 0) {
             return null;
@@ -215,7 +263,7 @@ export default function Home() {
           };
         })
         .filter(
-          (item): item is OrderItem =>
+          (item): item is CartLine =>
             item !== null
         )
     );
@@ -225,92 +273,37 @@ export default function Home() {
   // REMOVE CART ITEM
   // ============================================
 
-  const handleRemoveItem = (
+  const handleRemoveLine = (lineId: string) => {
+    setCartItems((previousItems) =>
+      previousItems.filter(
+        (item) => item.line_id !== lineId
+      )
+    );
+
+    toast.info("Item removed from cart");
+  };
+
+  // The chat un-selects a bundle item by product.
+  const handleRemoveBundleItem = (
     productId: string
   ) => {
     setCartItems((previousItems) =>
       previousItems.filter(
         (item) =>
-          item.product_id !== productId
+          !(
+            item.product_id === productId &&
+            item.is_upsell
+          )
       )
     );
-
-    toast.info(
-      "Item removed from cart"
-    );
-  };
-
-  // ============================================
-  // CREATE ORDER
-  // ============================================
-
-  const createCheckoutOrder = async (
-    items: OrderItem[],
-    discount: number
-  ) => {
-    if (items.length === 0) {
-      toast.error(
-        "Your cart is empty"
-      );
-
-      return null;
-    }
-
-    const defaultAddress: Address = {
-      name: "Aarav Sharma",
-      phone: "+91 98765 43210",
-      address_line:
-        "Flat 402, Greenfield Heights, Indiranagar",
-      city: "Bengaluru",
-      state: "Karnataka",
-      pincode: "560038",
-    };
-
-    const orderPayload: OrderCreate = {
-      customer_name:
-        defaultAddress.name,
-
-      customer_email:
-        "aarav.sharma@example.com",
-
-      customer_phone:
-        defaultAddress.phone,
-
-      shipping_address:
-        defaultAddress,
-
-      items,
-
-      bundle_discount: Math.max(
-        0,
-        discount
-      ),
-    };
-
-    try {
-      const createdOrder =
-        await apiPost<Order>(
-          "/orders",
-          orderPayload
-        );
-
-      return createdOrder;
-    } catch (error) {
-      console.error(
-        "Order creation failed:",
-        error
-      );
-
-      toast.error(
-        "Could not create Razorpay order"
-      );
-
-      return null;
-    }
   };
 
   // ============================================
   // BUY NOW
+  //
+  // Puts the product (and any bundle items picked in chat)
+  // in the cart and opens checkout, where the customer
+  // enters their own delivery details.
   // ============================================
 
   const handleInstantBuy = async (
@@ -330,133 +323,34 @@ export default function Home() {
       return;
     }
 
-    // Primary product.
-    const items: OrderItem[] = [
-      {
-        product_id: product.id,
-        name: product.name,
-        brand: product.brand,
-        price: product.price,
-        original_price:
-          product.original_price,
-        quantity: 1,
+    addLine(product, { size, color });
 
-        size:
-          size ||
-          (product.sizes?.length > 0
-            ? product.sizes[0]
-            : undefined),
-
-        color:
-          color ||
-          (product.colors?.length > 0
-            ? product.colors[0]
-            : undefined),
-
-        is_upsell: false,
-
-        image_url:
-          product.image_url,
-      },
-    ];
-
-    // Add selected AI upsells.
-    if (
-      bundleUpsells.length > 0
-    ) {
-      bundleUpsells.forEach(
-        (upsell) => {
-          if (
-            !upsell.in_stock ||
-            upsell.stock_quantity <= 0
-          ) {
-            return;
-          }
-
-          items.push({
-            product_id: upsell.id,
-            name: upsell.name,
-            brand: upsell.brand,
-            price: upsell.price,
-            original_price:
-              upsell.original_price,
-            quantity: 1,
-
-            size:
-              upsell.sizes?.length > 0
-                ? upsell.sizes[0]
-                : undefined,
-
-            color:
-              upsell.colors?.length > 0
-                ? upsell.colors[0]
-                : undefined,
-
-            is_upsell: true,
-
-            image_url:
-              upsell.image_url,
-          });
-        }
-      );
-    }
-
-    /*
-     * ₹150 discount for each selected AI
-     * bundle upsell.
-     */
-    const upsellDiscount =
-      bundleUpsells.length * 150;
-
-    const createdOrder =
-      await createCheckoutOrder(
-        items,
-        upsellDiscount
+    bundleUpsells
+      .filter(
+        (upsell) =>
+          upsell.in_stock &&
+          upsell.stock_quantity > 0
+      )
+      .forEach((upsell) =>
+        addLine(upsell, { isUpsell: true })
       );
 
-    if (!createdOrder) {
-      return;
-    }
-
-    setActiveOrder(
-      createdOrder
-    );
-
-    setIsRazorpayOpen(true);
+    setIsCartOpen(true);
   };
 
   // ============================================
-  // PROCEED FROM CART TO RAZORPAY
+  // CART DRAWER CREATED THE ORDER → OPEN RAZORPAY
   // ============================================
 
-  const handleProceedToRazorpay =
-    async () => {
-      if (cartItems.length === 0) {
-        toast.error(
-          "Your cart is empty"
-        );
+  const handleProceedToRazorpay = (
+    createdOrder: Order
+  ) => {
+    setIsCartOpen(false);
 
-        return;
-      }
+    setActiveOrder(createdOrder);
 
-      const createdOrder =
-        await createCheckoutOrder(
-          cartItems,
-          bundleDiscount
-        );
-
-      if (!createdOrder) {
-        return;
-      }
-
-      setIsCartOpen(false);
-
-      setActiveOrder(
-        createdOrder
-      );
-
-      setIsRazorpayOpen(true);
-    };
+    setIsRazorpayOpen(true);
+  };
 
   // ============================================
   // PAYMENT COMPLETE
@@ -479,8 +373,6 @@ export default function Home() {
     );
 
     setCartItems([]);
-
-    setBundleDiscount(0);
 
     setIsSuccessModalOpen(true);
 
@@ -549,7 +441,10 @@ export default function Home() {
                 handleInstantBuy
               }
               onRemoveFromCart={
-                handleRemoveItem
+                handleRemoveBundleItem
+              }
+              onSessionChange={
+                setChatSessionId
               }
             />
           </div>
@@ -562,7 +457,9 @@ export default function Home() {
           <div
             data-testid="view-inventory-hub"
           >
-            <InventoryManager />
+            <MerchantKeyGate>
+              <InventoryManager />
+            </MerchantKeyGate>
           </div>
         )}
 
@@ -573,7 +470,9 @@ export default function Home() {
           <div
             data-testid="view-campaign-orchestrator"
           >
-            <CampaignOrchestrator />
+            <MerchantKeyGate>
+              <CampaignOrchestrator />
+            </MerchantKeyGate>
           </div>
         )}
 
@@ -584,7 +483,9 @@ export default function Home() {
           <div
             data-testid="view-audit-ledger"
           >
-            <AuditLedger />
+            <MerchantKeyGate>
+              <AuditLedger />
+            </MerchantKeyGate>
           </div>
         )}
       </main>
@@ -599,14 +500,12 @@ export default function Home() {
           setIsCartOpen(false)
         }
         items={cartItems}
-        bundleDiscount={
-          bundleDiscount
-        }
+        sessionId={chatSessionId}
         onUpdateQuantity={
           handleUpdateQuantity
         }
         onRemoveItem={
-          handleRemoveItem
+          handleRemoveLine
         }
         onProceedToRazorpay={
           handleProceedToRazorpay

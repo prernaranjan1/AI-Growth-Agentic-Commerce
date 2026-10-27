@@ -155,24 +155,15 @@ const RazorpayModal: React.FC<RazorpayModalProps> = ({
            * Send Razorpay's signature to backend.
            * Backend verifies it using RAZORPAY_KEY_SECRET.
            */
+          /*
+           * Only Razorpay's three values are sent. The backend
+           * checks the signature, then fetches the payment from
+           * Razorpay for its method and amount.
+           */
           const verifyPayload: PaymentVerifyRequest = {
             razorpay_order_id: response.razorpay_order_id,
             razorpay_payment_id: response.razorpay_payment_id,
             razorpay_signature: response.razorpay_signature,
-
-            /*
-             * The backend should ideally fetch the payment from
-             * Razorpay and determine the actual payment method.
-             *
-             * Keeping this value for compatibility with the
-             * current backend.
-             */
-            payment_method: "upi",
-
-            payment_details: {
-              source: "razorpay_standard_checkout",
-              verified_at: new Date().toISOString(),
-            },
           };
 
           const updatedOrder = await apiPost<Order>(
@@ -351,6 +342,39 @@ const RazorpayModal: React.FC<RazorpayModalProps> = ({
               </p>
             </div>
           </div>
+        </div>
+
+        {/* Server-computed price breakdown */}
+        <div className="border-b px-6 py-4 text-sm">
+          <div className="flex justify-between text-slate-600">
+            <span>Subtotal</span>
+            <span>₹{order.subtotal.toFixed(2)}</span>
+          </div>
+
+          {order.bundle_discount > 0 && (
+            <div className="flex justify-between text-emerald-700">
+              <span>Bundle savings</span>
+              <span>-₹{order.bundle_discount.toFixed(2)}</span>
+            </div>
+          )}
+
+          {(order.promo_discount ?? 0) > 0 && (
+            <div className="flex justify-between text-emerald-700">
+              <span>Promo {order.promo_code}</span>
+              <span>-₹{(order.promo_discount ?? 0).toFixed(2)}</span>
+            </div>
+          )}
+
+          {order.reservation_expires_at && (
+            <p className="mt-2 text-xs text-slate-500">
+              Stock is held for you until{" "}
+              {new Date(order.reservation_expires_at).toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+              .
+            </p>
+          )}
         </div>
 
         {/* Customer details */}

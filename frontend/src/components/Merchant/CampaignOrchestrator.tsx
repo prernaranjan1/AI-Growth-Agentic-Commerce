@@ -107,7 +107,7 @@ export const CampaignOrchestrator: React.FC = () => {
         setIsGenerating(false);
 
         toast.success(
-          `AI Campaign "${newCampaign.title}" created successfully!`
+          `Drafted "${newCampaign.title}". Activate it to enable code ${newCampaign.discount_code}.`
         );
       },
 
@@ -301,7 +301,7 @@ export const CampaignOrchestrator: React.FC = () => {
           <div className="flex items-center gap-2">
             <span className="flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/20 px-2 py-0.5 font-mono text-[10px] font-bold text-amber-300">
               <Sparkles className="h-3 w-3" />
-              Autonomous Merchant Agent
+              AI Copywriter
             </span>
           </div>
 
@@ -310,10 +310,10 @@ export const CampaignOrchestrator: React.FC = () => {
           </h2>
 
           <p className="mt-1 text-xs text-zinc-400">
-            AI Agent that plans, creates,
-            executes, and monitors
-            multi-channel retail campaigns
-            automatically.
+            Gemini drafts WhatsApp and SMS copy
+            with a promo code. Activate a draft to
+            make its code redeemable at checkout.
+            Messages are not sent from here.
           </p>
         </div>
 
@@ -337,7 +337,7 @@ export const CampaignOrchestrator: React.FC = () => {
           <Zap className="h-4 w-4" />
 
           <span>
-            Autonomous Campaign Generator
+            Campaign Draft Generator
           </span>
         </div>
 
@@ -504,7 +504,7 @@ export const CampaignOrchestrator: React.FC = () => {
                   <RefreshCw className="h-4 w-4 animate-spin" />
 
                   <span>
-                    AI Agent Orchestrating...
+                    Drafting campaign...
                   </span>
                 </>
               ) : (
@@ -512,8 +512,7 @@ export const CampaignOrchestrator: React.FC = () => {
                   <Sparkles className="h-4 w-4 text-amber-300" />
 
                   <span>
-                    Autonomously Orchestrate
-                    & Deploy Campaign
+                    Draft Campaign with AI
                   </span>
                 </>
               )}

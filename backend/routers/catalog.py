@@ -1,10 +1,11 @@
 import re
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import List, Optional, Literal
 
 from lib.db import db
 from models.catalog import Product, ProductCreate, ProductUpdate
-from models.audit import AuditEvent
+from lib.audit import record_event
+from lib.auth import require_merchant
 
 
 router = APIRouter(
@@ -92,7 +93,7 @@ async def get_products(
 # CATALOG STATISTICS
 # =========================================================
 
-@router.get("/stats/summary")
+@router.get("/stats/summary", dependencies=[Depends(require_merchant)])
 async def get_catalog_stats():
 
     total_skus = await db.products.count_documents({})
@@ -163,7 +164,7 @@ async def get_product(id: str):
 # CREATE PRODUCT
 # =========================================================
 
-@router.post("", response_model=Product)
+@router.post("", response_model=Product, dependencies=[Depends(require_merchant)])
 async def create_product(payload: ProductCreate):
 
     discount_pct = 0
@@ -184,23 +185,18 @@ async def create_product(payload: ProductCreate):
 
     await db.products.insert_one(product.model_dump())
 
-    audit_evt = AuditEvent(
-        event_type="PRODUCT_CREATED",
-        title="Merchant Added Product",
-        description=(
-            f"New SKU created: {product.name} ({product.brand})"
-        ),
+    await record_event(
+        "PRODUCT_CREATED",
+        "Merchant Added Product",
+        f"New SKU created: {product.name} ({product.brand})",
         details={
             "product_id": product.id,
             "sku": product.sku,
             "price": product.price,
             "stock": product.stock_quantity,
-            "category": product.category
+            "category": product.category,
         },
-        status="success"
     )
-
-    await db.audit_events.insert_one(audit_evt.model_dump())
 
     return product
 
@@ -209,7 +205,7 @@ async def create_product(payload: ProductCreate):
 # UPDATE PRODUCT
 # =========================================================
 
-@router.put("/{id}", response_model=Product)
+@router.put("/{id}", response_model=Product, dependencies=[Depends(require_merchant)])
 async def update_product(id: str, payload: ProductUpdate):
 
     doc = await db.products.find_one({"id": id})
@@ -238,6 +234,10 @@ async def update_product(id: str, payload: ProductUpdate):
     if "stock_quantity" in update_data:
         update_data["in_stock"] = update_data["stock_quantity"] > 0
 
+    if "stock_quantity" in update_data or "in_stock" in update_data:
+        # The merchant now owns the on-sale state.
+        update_data["sold_out_by_reservation"] = False
+
     if update_data:
         await db.products.update_one({"id": id}, {"$set": update_data})
 
@@ -250,7 +250,7 @@ async def update_product(id: str, payload: ProductUpdate):
 # DELETE PRODUCT
 # =========================================================
 
-@router.delete("/{id}")
+@router.delete("/{id}", dependencies=[Depends(require_merchant)])
 async def delete_product(id: str):
 
     res = await db.products.delete_one({"id": id})

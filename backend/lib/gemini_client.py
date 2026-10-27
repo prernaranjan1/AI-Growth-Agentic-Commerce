@@ -11,13 +11,8 @@ _client: Optional[genai.Client] = None
 
 
 def _get_api_key() -> Optional[str]:
-    # GEMINI_API_KEY is the preferred name. The other two keep compatibility
-    # with the existing backend configuration.
-    return (
-        os.getenv("GEMINI_API_KEY")
-        or os.getenv("GOOGLE_API_KEY")
-        or os.getenv("_GEMINI_API_KEY")
-    )
+    # GOOGLE_API_KEY is the google-genai SDK's own default name.
+    return os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 
 
 def get_gemini_client() -> Optional[genai.Client]:

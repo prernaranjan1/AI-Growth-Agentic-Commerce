@@ -30,7 +30,8 @@ interface ChatPanelProps {
   onAddToCart: (
     product: Product,
     size?: string,
-    color?: string
+    color?: string,
+    isUpsell?: boolean
   ) => void;
 
   onInstantBuy: (
@@ -41,6 +42,10 @@ interface ChatPanelProps {
   ) => Promise<void>;
 
   onRemoveFromCart?: (productId: string) => void;
+
+  // Lets checkout link the order to this chat (conversion tracking
+  // and the agent reasoning snapshot are attached server-side).
+  onSessionChange?: (sessionId: string) => void;
 }
 
 const QUICK_PROMPTS = [
@@ -56,6 +61,7 @@ interface AgentChatResponse {
   reasoning: AgentReasoningStep;
   recommended_products: Product[];
   upsell_products: Product[];
+  upsell_savings?: Record<string, number>;
   message_id: string;
 }
 
@@ -63,6 +69,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   onAddToCart,
   onInstantBuy,
   onRemoveFromCart,
+  onSessionChange,
 }) => {
   // ============================================
   // CHAT STATE
@@ -74,32 +81,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         id: "welcome-msg",
         role: "assistant",
         content:
-          "Hello! I am **Nexus AI**, your intelligent commerce agent. Tell me what you're looking for in natural language — like *“I need running shoes under ₹3,000”* — and I'll search our live merchant warehouse, check real-time stock, and prepare your 1-click Razorpay checkout!",
+          "Hello! I am **Nexus AI**, your intelligent commerce agent. Tell me what you're looking for — like *“I need running shoes under ₹3,000”* — and I'll search the catalog, check stock, and suggest the best match.",
         timestamp: new Date().toISOString(),
-
-        agent_reasoning: {
-          intent_summary:
-            "AI Agent initialized & connected to merchant warehouse",
-
-          budget_extracted: null,
-
-          category_extracted: null,
-
-          catalog_matches_found: 12,
-
-          inventory_status:
-            "Warehouse inventory synchronized (12 SKUs active)",
-
-          recommendation_rationale:
-            "Ready to process natural language shopper constraints",
-
-          upsell_strategy:
-            "Dynamic cross-sell engine armed",
-
-          execution_time_ms: 45,
-
-          confidence_score: 1.0,
-        },
       },
     ]);
 
@@ -122,6 +105,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
   const [selectedUpsellIds, setSelectedUpsellIds] =
     useState<string[]>([]);
+
+  const [upsellSavings, setUpsellSavings] =
+    useState<Record<string, number>>({});
 
   const [sessionId, setSessionId] =
     useState<string | undefined>(undefined);
@@ -198,6 +184,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         response.session_id
       );
 
+      onSessionChange?.(response.session_id);
+
       // ========================================
       // UPDATE AI REASONING
       // ========================================
@@ -216,6 +204,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
       setUpsellProducts(
         response.upsell_products ?? []
+      );
+
+      setUpsellSavings(
+        response.upsell_savings ?? {}
       );
 
       /*
@@ -312,10 +304,12 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     /*
      * Add the upsell product to cart as well.
      */
-    onAddToCart(product);
+    onAddToCart(product, undefined, undefined, true);
 
     toast.success(
-      `Added ${product.name} with bundle discount!`
+      (upsellSavings[product.id] ?? 0) > 0
+        ? `Added ${product.name}. ₹${upsellSavings[product.id]} off when bought with ${recommendedProducts[0]?.name ?? "its matching product"}.`
+        : `Added ${product.name} to cart`
     );
   };
 
@@ -547,6 +541,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                   }
                   selectedUpsellIds={
                     selectedUpsellIds
+                  }
+                  savings={upsellSavings}
+                  anchorName={
+                    recommendedProducts[0]?.name
                   }
                 />
               )}

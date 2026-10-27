@@ -111,7 +111,7 @@ export const OrderSuccessModal: React.FC<OrderSuccessModalProps> = ({
             </span>
 
             <span className="font-semibold uppercase text-blue-400">
-              {order.payment_method || "UPI"}
+              {(order.payment_method || "Razorpay").toUpperCase()}
             </span>
           </div>
         </div>
@@ -203,6 +203,20 @@ export const OrderSuccessModal: React.FC<OrderSuccessModalProps> = ({
                 <span className="font-mono">
                   -₹
                   {order.bundle_discount.toLocaleString("en-IN", {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}
+                </span>
+              </div>
+            )}
+
+            {(order.promo_discount ?? 0) > 0 && (
+              <div className="flex justify-between font-semibold text-emerald-400">
+                <span>Promo {order.promo_code}:</span>
+
+                <span className="font-mono">
+                  -₹
+                  {(order.promo_discount ?? 0).toLocaleString("en-IN", {
                     minimumFractionDigits: 2,
                     maximumFractionDigits: 2,
                   })}

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -24,9 +25,9 @@ load_dotenv(
 
 from lib.db import (
     client,
-    db,
     ensure_indexes,
 )
+from lib.inventory import release_expired_reservations
 
 # =========================================================
 # SUB-ROUTERS
@@ -60,12 +61,31 @@ logger = logging.getLogger(__name__)
 # STARTUP / SHUTDOWN
 # =========================================================
 
+async def _expire_reservations_forever(interval_seconds: int = 60):
+    """Return stock held by unpaid orders once their reservation lapses."""
+    while True:
+        try:
+            await release_expired_reservations()
+        except Exception:
+            logger.exception("Releasing expired reservations failed")
+
+        await asyncio.sleep(interval_seconds)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
 
     logger.info(
         "Starting Nexus AI Commerce API..."
     )
+
+    if not os.getenv("MERCHANT_API_KEY"):
+        logger.warning(
+            "MERCHANT_API_KEY is not set: merchant endpoints "
+            "(catalog edits, campaigns, orders, audit) will return 503."
+        )
+
+    expiry_task = None
 
     try:
         # Create MongoDB indexes
@@ -75,9 +95,16 @@ async def lifespan(app: FastAPI):
             "MongoDB indexes initialized."
         )
 
+        expiry_task = asyncio.create_task(
+            _expire_reservations_forever()
+        )
+
         yield
 
     finally:
+
+        if expiry_task:
+            expiry_task.cancel()
 
         logger.info(
             "Closing MongoDB connection..."
@@ -206,7 +233,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_origins=allowed_origins,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["Content-Type", "X-Merchant-Key"],
 )
 
 

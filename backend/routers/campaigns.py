@@ -1,51 +1,64 @@
 import json
-import os
+import logging
 import re
 import uuid
 from typing import List, Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from lib.audit import record_event
+from lib.auth import require_merchant
 from lib.db import db
+from lib.gemini_client import generate_text, get_gemini_client
 from models.campaigns import (
     Campaign,
     CampaignCreate,
     CampaignOrchestrateRequest,
+    NO_FORECAST,
 )
-from models.audit import AuditEvent
-from lib.gemini_client import generate_text, get_gemini_client
 
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/campaigns",
     tags=["campaigns"],
+    dependencies=[Depends(require_merchant)],
 )
 
 
+def _normalize_code(code: str) -> str:
+    cleaned = re.sub(r"[^A-Z0-9]", "", code.upper())[:16]
+    return cleaned or f"NEXUS{uuid.uuid4().hex[:4].upper()}"
+
+
+async def _unique_code(code: str) -> str:
+    """Promo codes are redeemed at checkout, so they must not collide."""
+    candidate = _normalize_code(code)
+
+    while await db.campaigns.find_one({"discount_code": candidate}):
+        candidate = f"{candidate[:12]}{uuid.uuid4().hex[:4].upper()}"
+
+    return candidate
+
+
 # =========================================================
-# GEMINI SETUP
-#
-# NOTE: this follows the standard google-generativeai pattern.
-# If your existing genai.py (used elsewhere in the agent) sets
-# up the client differently — different model name, different
-# API key env var, a shared client instance — this should be
-# reconciled to match rather than kept as a second, separate
-# way of calling Gemini. Paste genai.py and I'll align these.
+# GEMINI COPY GENERATION
 # =========================================================
 
-async def _generate_campaign_copy(
-    payload: CampaignOrchestrateRequest,
-) -> dict:
+async def _generate_campaign_copy(payload: CampaignOrchestrateRequest) -> dict:
 
     if get_gemini_client() is None:
         raise HTTPException(
             status_code=503,
             detail=(
-                "Gemini is not configured — set GEMINI_API_KEY in .env "
-                "to use campaign orchestration."
+                "Gemini is not configured. Set GEMINI_API_KEY in "
+                "backend/.env to use campaign orchestration."
             ),
         )
 
+    # The model writes copy only. Discount values come from the
+    # merchant's request, and no performance numbers are generated.
     prompt = f"""
 You are a marketing copywriter for an Indian e-commerce retailer selling
 running shoes, smartwatches, and audio accessories in INR (₹).
@@ -56,14 +69,15 @@ Write a marketing campaign with these constraints:
 - Discount: {payload.discount_percent}%
 - Extra creative direction from the merchant: {payload.prompt or "none"}
 
+Do not invent prices, sales figures, ROAS, order counts or forecasts.
+
 Respond with ONLY a JSON object with exactly these keys:
 {{
   "title": "short catchy campaign title with an emoji",
   "target_audience": "one sentence describing who this targets",
-  "whatsapp_copy": "WhatsApp message using *bold* markdown, under 400 chars, include a discount code and a placeholder link",
-  "sms_copy": "SMS message under 160 chars, include the discount code",
-  "discount_code": "a short uppercase promo code",
-  "forecasted_roi": "one line like '4.8x ROAS | Est. 210 Orders | ₹5.2L Projected GMV'"
+  "whatsapp_copy": "WhatsApp message using *bold* markdown, under 400 chars, include the discount code placeholder {{CODE}} and a placeholder link",
+  "sms_copy": "SMS message under 160 chars, include the discount code placeholder {{CODE}}",
+  "discount_code": "a short uppercase promo code, letters and digits only"
 }}
 """
 
@@ -81,15 +95,16 @@ Respond with ONLY a JSON object with exactly these keys:
         if not raw:
             raise ValueError("Gemini returned an empty response")
         generated = json.loads(raw)
-    except Exception as exc:
+    except Exception:
+        logger.exception("Gemini campaign generation failed")
         raise HTTPException(
             status_code=502,
-            detail=f"Gemini campaign generation failed: {exc}",
+            detail="Campaign copy generation failed. Please try again.",
         )
 
     required_keys = {
         "title", "target_audience", "whatsapp_copy",
-        "sms_copy", "discount_code", "forecasted_roi",
+        "sms_copy", "discount_code",
     }
     if not required_keys.issubset(generated.keys()):
         raise HTTPException(
@@ -128,8 +143,10 @@ async def get_campaign(id: str):
 
 @router.post("", response_model=Campaign)
 async def create_campaign(payload: CampaignCreate):
+    data = payload.model_dump()
+    data["discount_code"] = await _unique_code(payload.discount_code)
 
-    campaign = Campaign(**payload.model_dump())
+    campaign = Campaign(**data, created_by_agent=False)
 
     await db.campaigns.insert_one(campaign.model_dump())
 
@@ -137,7 +154,11 @@ async def create_campaign(payload: CampaignCreate):
 
 
 # =========================================================
-# AI-ORCHESTRATED CAMPAIGN
+# AI-DRAFTED CAMPAIGN
+#
+# Gemini drafts the copy; the campaign is saved as a draft.
+# Activating it (PATCH /status) makes its promo code
+# redeemable at checkout. Messages are not sent from here.
 # =========================================================
 
 @router.post("/orchestrate", response_model=Campaign)
@@ -145,28 +166,34 @@ async def orchestrate_campaign(payload: CampaignOrchestrateRequest):
 
     generated = await _generate_campaign_copy(payload)
 
+    code = await _unique_code(generated["discount_code"])
+
+    def fill(text: str) -> str:
+        return text.replace("{CODE}", code)
+
     campaign = Campaign(
         title=generated["title"],
         goal=payload.goal or "clearance",
         target_audience=generated["target_audience"],
+        status="draft",
         channels=["whatsapp", "sms"],
-        whatsapp_copy=generated["whatsapp_copy"],
-        sms_copy=generated["sms_copy"],
-        discount_code=generated["discount_code"],
+        whatsapp_copy=fill(generated["whatsapp_copy"]),
+        sms_copy=fill(generated["sms_copy"]),
+        discount_code=code,
         discount_percent=payload.discount_percent or 15,
-        forecasted_roi=generated["forecasted_roi"],
+        forecasted_roi=NO_FORECAST,
         target_category=payload.target_category or "footwear",
         created_by_agent=True,
     )
 
     await db.campaigns.insert_one(campaign.model_dump())
 
-    audit_evt = AuditEvent(
-        event_type="CAMPAIGN_AUTO_LAUNCHED",
-        title="AI Campaign Auto-Launched",
-        description=(
-            f"Gemini generated and launched campaign '{campaign.title}' "
-            f"targeting {campaign.target_category}."
+    await record_event(
+        "CAMPAIGN_AUTO_LAUNCHED",
+        "AI Campaign Drafted",
+        (
+            f"Gemini drafted campaign '{campaign.title}' for "
+            f"{campaign.target_category}. Activate it to enable code {code}."
         ),
         details={
             "campaign_id": campaign.id,
@@ -174,10 +201,8 @@ async def orchestrate_campaign(payload: CampaignOrchestrateRequest):
             "discount_code": campaign.discount_code,
             "discount_percent": campaign.discount_percent,
         },
-        status="success",
+        status="info",
     )
-
-    await db.audit_events.insert_one(audit_evt.model_dump())
 
     return campaign
 

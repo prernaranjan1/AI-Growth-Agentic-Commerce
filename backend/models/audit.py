@@ -18,6 +18,7 @@ class AuditEvent(BaseModel):
         "PAYMENT_INITIATED",
         "PAYMENT_VERIFIED",
         "PAYMENT_FAILED",
+        "ORDER_EXPIRED",
         "CAMPAIGN_AUTO_LAUNCHED",
     ]
     session_id: Optional[str] = None
@@ -26,7 +27,9 @@ class AuditEvent(BaseModel):
     description: str
     details: Dict[str, Any] = Field(default_factory=dict)
     status: Literal["success", "warning", "error", "info"] = "success"
-    latency_ms: int = Field(default=120, ge=0)
+    # Measured wall-clock time for events that have a duration (an agent
+    # turn). Point-in-time events (an order created) leave it empty.
+    latency_ms: Optional[int] = Field(default=None, ge=0)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 

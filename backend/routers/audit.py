@@ -1,15 +1,17 @@
 import re
 from typing import List, Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
+from lib.auth import require_merchant
 from lib.db import db
 from models.audit import AuditEvent, AuditMetrics
 
 
 router = APIRouter(
     prefix="/audit",
-    tags=["audit"]
+    tags=["audit"],
+    dependencies=[Depends(require_merchant)],
 )
 
 
@@ -98,7 +100,7 @@ async def get_audit_metrics():
     # =====================================================
 
     gmv_pipeline = [
-        {"$match": {"status": "paid"}},
+        {"$match": {"status": {"$in": ["paid", "shipped"]}}},
         {
             "$group": {
                 "_id": None,
@@ -113,61 +115,45 @@ async def get_audit_metrics():
     total_paid_orders = gmv_result[0]["count"] if gmv_result else 0
 
     # =====================================================
-    # 2. TOTAL ORDERS
+    # 2. TOTAL ORDERS / CHECKOUT COMPLETION
+    #
+    # Completion = paid / orders that reached an outcome
+    # (paid, failed, expired). Orders still waiting for
+    # payment are left out rather than counted as success.
     # =====================================================
 
-    all_orders_count = await (
-        db.orders.count_documents({})
-    )
+    all_orders_count = await db.orders.count_documents({})
 
-    failed_orders_count = await (
-        db.orders.count_documents({
-            "status": "failed"
-        })
-    )
+    closed_orders_count = await db.orders.count_documents({
+        "status": {"$in": ["paid", "shipped", "failed", "expired"]}
+    })
 
-    if all_orders_count > 0:
-
-        successful_orders = (
-            all_orders_count
-            - failed_orders_count
-        )
-
+    if closed_orders_count > 0:
         payment_success_rate = round(
-            (
-                successful_orders
-                / all_orders_count
-            ) * 100,
-            1
+            (total_paid_orders / closed_orders_count) * 100, 1
         )
-
     else:
-
         payment_success_rate = 0.0
 
     # =====================================================
-    # 3. CHAT / AI CONVERSION
+    # 3. AI CONVERSION
+    #
+    # Paid orders that came from a chat session, divided by
+    # chat sessions. Orders carry session_id for this.
     # =====================================================
 
-    total_sessions = await (
-        db.chat_sessions.count_documents({})
-    )
+    total_sessions = await db.chat_sessions.count_documents({})
+
+    ai_paid_orders = await db.orders.count_documents({
+        "status": {"$in": ["paid", "shipped"]},
+        "session_id": {"$ne": None},
+    })
 
     if total_sessions > 0:
-
         ai_conversion_rate = round(
-            min(
-                100.0,
-                (
-                    total_paid_orders
-                    / total_sessions
-                ) * 100
-            ),
-            1
+            min(100.0, (ai_paid_orders / total_sessions) * 100), 1
         )
-
     else:
-
         ai_conversion_rate = 0.0
 
     # =====================================================
@@ -192,7 +178,9 @@ async def get_audit_metrics():
     # =====================================================
 
     latency_pipeline = [
-        {"$match": {"latency_ms": {"$exists": True}}},
+        # One INTENT_PARSED event per agent turn, carrying the
+        # measured end-to-end latency of that turn.
+        {"$match": {"event_type": "INTENT_PARSED", "latency_ms": {"$ne": None}}},
         {
             "$group": {
                 "_id": None,
@@ -204,7 +192,7 @@ async def get_audit_metrics():
 
     avg_latency = (
         int(latency_result[0]["avg_latency"])
-        if latency_result
+        if latency_result and latency_result[0]["avg_latency"] is not None
         else 0
     )
 
@@ -218,8 +206,6 @@ async def get_audit_metrics():
             2
         ),
 
-        # Was total_paid_orders — "total_orders" should mean
-        # actual order volume, not just the paid subset.
         total_orders=all_orders_count,
 
         ai_conversion_rate=ai_conversion_rate,
